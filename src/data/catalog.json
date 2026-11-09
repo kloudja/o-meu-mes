@@ -1,0 +1,98 @@
+{
+  "accounts": [
+    {
+      "id": "act-r",
+      "name": "ActivoBank A",
+      "color": "#7a9c8c",
+      "restricted": false
+    },
+    {
+      "id": "act-s",
+      "name": "ActivoBank B",
+      "color": "#9eabc3",
+      "restricted": false
+    },
+    {
+      "id": "moey-r",
+      "name": "Moey! A",
+      "color": "#6eaaa6",
+      "restricted": false
+    },
+    {
+      "id": "moey-s",
+      "name": "Moey! B",
+      "color": "#b3a1bb",
+      "restricted": false
+    },
+    {
+      "id": "san",
+      "name": "Santander",
+      "color": "#c79586",
+      "restricted": false
+    },
+    {
+      "id": "bank",
+      "name": "BankInter A",
+      "color": "#c5ad74",
+      "restricted": false
+    }
+  ],
+  "categories": [
+    {
+      "id": "cat-habitacao",
+      "name": "Habitação"
+    },
+    {
+      "id": "cat-servicos",
+      "name": "Serviços Essenciais"
+    },
+    {
+      "id": "cat-refeicoes",
+      "name": "Refeições/Supermercado"
+    },
+    {
+      "id": "cat-seguros",
+      "name": "Seguros"
+    },
+    {
+      "id": "cat-comunicacoes",
+      "name": "Comunicações"
+    },
+    {
+      "id": "cat-mobilidade",
+      "name": "Mobilidade"
+    },
+    {
+      "id": "cat-poupancas",
+      "name": "Poupanças"
+    },
+    {
+      "id": "cat-lazer",
+      "name": "Lazer/Outros"
+    },
+    {
+      "id": "cat-educacao",
+      "name": "Educação/Infância"
+    },
+    {
+      "id": "cat-creditos",
+      "name": "Cartões e Créditos"
+    },
+    {
+      "id": "cat-alimentacao",
+      "name": "Alimentação"
+    },
+    {
+      "id": "cat-saude",
+      "name": "Saúde"
+    },
+    {
+      "id": "cat-casa",
+      "name": "Casa-OutrosGastos"
+    },
+    {
+      "id": "cat-exemplo",
+      "name": "Categoria de exemplo"
+    }
+  ]
+}

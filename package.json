@@ -1,0 +1,32 @@
+{
+  "name": "o-meu-mes",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/next.mjs dev",
+    "build": "node scripts/next.mjs build",
+    "start": "node scripts/next.mjs start",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "node scripts/test-browser.mjs",
+    "test:integration": "vitest run --config vitest.integration.config.ts",
+    "db:migrate": "node scripts/migrate.mjs"
+  },
+  "dependencies": {
+    "next": "16.4.4",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "tailwindcss": "4.3.4",
+    "@tailwindcss/postcss": "4.3.4"
+  },
+  "devDependencies": {
+    "typescript": "~5.9.3",
+    "@types/node": "^24.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "vitest": "^4.0.0",
+    "@playwright/test": "^1.56.0"
+  },
+  "packageManager": "pnpm@11.25.0"
+}
