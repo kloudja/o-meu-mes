@@ -5,9 +5,9 @@ import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { migrate, connect } from '../../src/server/storage.mjs';
-import { Repository, persist, type Command } from '../../src/server/repository';
+import { Repository, persist, type Command } from '../../src/modules/finance/infrastructure/repository';
 import { examples } from '../fixtures';
-import { balance, realized, type Action } from '../../src/domain/engine';
+import { balance, realized, type Action } from '../../src/modules/finance/domain/engine';
 const P='2026-11',A='a:act-r',B='a:act-s';
 const pay=(amount:number):Action=>({type:'execute',lineId:'food',amount,source:A,date:`${P}-02`,complete:false});
 async function port(){const s=createServer();await new Promise<void>(r=>s.listen(0,'127.0.0.1',r));const p=(s.address() as {port:number}).port;await new Promise<void>(r=>s.close(()=>r()));return p;}

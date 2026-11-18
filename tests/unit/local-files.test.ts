@@ -5,7 +5,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { expect, it, vi } from 'vitest';
 import { createBackup, restoreBackup } from '../../src/server/local-files.mjs';
 import { connect, migrate } from '../../src/server/storage.mjs';
-import { Repository } from '../../src/server/repository';
+import { Repository } from '../../src/modules/finance/infrastructure/repository';
 import { writeTestCatalog } from '../fixtures';
 
 vi.mock('node:fs', async importOriginal => {

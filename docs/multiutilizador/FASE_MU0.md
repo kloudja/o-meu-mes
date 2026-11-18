@@ -1,6 +1,6 @@
 # MU0 — Reorganização ampla com comportamento preservado
 
-Estado: por implementar. Dependência: aplicação local atual e alterações pré-existentes inventariadas. Escolha expressa **7B**: reorganizar primeiro, antes das novas funcionalidades. Ler [guia](README.md) e [arquitetura](ARQUITETURA.md).
+Implementada e verificada localmente em 18/11/2026. Consultar os [resultados, limites e procedimento de reversão](FASE_MU0_RESULTADOS.md). Escolha expressa **7B**: reorganizar primeiro, antes das novas funcionalidades. Ler [guia](README.md) e [arquitetura](ARQUITETURA.md).
 
 ## Objetivo e limites
 

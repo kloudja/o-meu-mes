@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
-import type { Recurring } from '../../src/domain/model';
-import { advanceReminders } from '../../src/domain/reminders';
+import type { Recurring } from '../../src/modules/finance/domain/model';
+import { advanceReminders } from '../../src/modules/finance/domain/reminders';
 
 const insurance:Recurring={id:'insurance',name:'Seguro do Carro',frequency:'annual',active:true,date:'2026-12-07',amount:null,accountId:'',reminderText:'Renegociar seguro auto',reminderDays:30};
 

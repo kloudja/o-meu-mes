@@ -36,6 +36,9 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Static checks
+        run: pnpm quality
+
       - name: Production build
         run: pnpm build
 

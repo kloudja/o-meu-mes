@@ -1,7 +1,7 @@
 import { expect, test } from './application';
 import type { APIRequestContext, Page } from '@playwright/test';
-import type { Action } from '../../src/domain/engine';
-import type { Confirmed } from '../../src/server/repository';
+import type { Action } from '../../src/modules/finance/domain/engine';
+import type { Confirmed } from '../../src/modules/finance/infrastructure/repository';
 import { goToScreen } from './navigation';
 
 const period='2085-11',next='2085-12';

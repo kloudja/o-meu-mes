@@ -1,6 +1,6 @@
 import { expect, test } from './application';
 import { goToScreen } from './navigation';
-import type { State } from '../../src/domain/model';
+import type { State } from '../../src/modules/finance/domain/model';
 
 test('receitas mensais entram no plano e cada mês começa com o saldo calculado do anterior', async ({ page, request, openExamples }) => {
   await openExamples(page);

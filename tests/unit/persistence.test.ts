@@ -4,11 +4,11 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { migrate, migrations, connect, databasePath } from '../../src/server/storage.mjs';
-import { Repository, persist, type Command, type Fault } from '../../src/server/repository';
+import { Repository, persist, type Command, type Fault } from '../../src/modules/finance/infrastructure/repository';
 import { handleGet, handlePost } from '../../src/server/http';
 import { examples, writeTestCatalog } from '../fixtures';
-import { activeEvents, balance, completed, pending, previousSavingBalance, realized, type Action, type FinancialAction } from '../../src/domain/engine';
-import type { State } from '../../src/domain/model';
+import { activeEvents, balance, completed, pending, previousSavingBalance, realized, type Action, type FinancialAction } from '../../src/modules/finance/domain/engine';
+import type { State } from '../../src/modules/finance/domain/model';
 const A='a:act-r',B='a:act-s',M='a:moey-r',R='r:em',P='2026-11';
 let sequence=0;
 function path(){return join(mkdtempSync(join(tmpdir(),'omeumes-test-')),'test.sqlite');}

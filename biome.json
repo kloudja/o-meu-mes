@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/@biomejs/biome/configuration_schema.json",
+  "files": {
+    "includes": [
+      "src/**/*.ts",
+      "src/**/*.tsx",
+      "src/**/*.mjs",
+      "scripts/check-boundaries.mjs",
+      "tests/**/mu0-*"
+    ]
+  },
+  "formatter": {
+    "enabled": true,
+    "indentStyle": "space",
+    "lineWidth": 110,
+    "includes": [
+      "src/shared/**",
+      "src/config/**",
+      "src/modules/finance/contracts/**",
+      "src/modules/finance/i18n/**",
+      "src/modules/finance/ui/MonthOverview.tsx",
+      "src/modules/finance/ui/WorkspaceNavigation.tsx",
+      "src/modules/finance/ui/FinanceApp.tsx",
+      "src/modules/finance/ui/MovementHistory.tsx",
+      "src/modules/finance/ui/PaymentFeedback.tsx",
+      "src/modules/finance/ui/amount-display.ts",
+      "scripts/check-boundaries.mjs",
+      "tests/**/mu0-*"
+    ]
+  },
+  "javascript": { "formatter": { "quoteStyle": "single" } },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "preset": "none",
+      "correctness": { "noUnusedImports": "error", "noUnreachable": "error", "noConstAssign": "error" },
+      "suspicious": {
+        "noDuplicateCase": "error",
+        "noExplicitAny": "error",
+        "noFallthroughSwitchClause": "error"
+      }
+    }
+  }
+}

@@ -1,7 +1,7 @@
 import { goToScreen } from './navigation';
 import { expect, test } from './application';
 import type { Page, APIRequestContext } from '@playwright/test';
-import type { Action } from '../../src/domain/engine';
+import type { Action } from '../../src/modules/finance/domain/engine';
 
 const d=(p:Page)=>p.getByRole('dialog');
 let period:string;

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { examples } from '../fixtures';
-import { balance, dueDate, initialPlan, newMonth, pending, realized, reserveUse, summary, transact, type Action } from '../../src/domain/engine';
-import { money, parseMoney } from '../../src/domain/money';
-import { aid, rid, type State } from '../../src/domain/model';
+import { balance, dueDate, initialPlan, newMonth, pending, realized, reserveUse, summary, transact, type Action } from '../../src/modules/finance/domain/engine';
+import { money, parseMoney } from '../../src/modules/finance/domain/money';
+import { aid, rid, type State } from '../../src/modules/finance/domain/model';
 const withRestricted=()=>{const s=examples();s.accounts.push({id:'restricted-test',name:'Origem restrita de teste',color:'#999999',restricted:true});s.months[s.selected].initials[aid('restricted-test')]=18000;return s;};
 const month=(s:State)=>s.months[s.selected];
 let sequence=0;

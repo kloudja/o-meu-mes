@@ -10,22 +10,29 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "test:integration": "vitest run --config vitest.integration.config.ts",
-    "db:migrate": "node scripts/migrate.mjs"
+    "db:migrate": "node scripts/migrate.mjs",
+    "format": "biome format --write",
+    "format:check": "biome format",
+    "lint": "biome lint",
+    "check:imports": "node scripts/check-boundaries.mjs",
+    "quality": "pnpm run check:imports && pnpm run lint && pnpm run format:check"
   },
   "dependencies": {
-    "next": "16.4.4",
+    "@tailwindcss/postcss": "4.3.4",
+    "next": "16.4.6",
     "react": "19.3.1",
     "react-dom": "19.3.1",
     "tailwindcss": "4.3.4",
-    "@tailwindcss/postcss": "4.3.4"
+    "zod": "4.6.7"
   },
   "devDependencies": {
-    "typescript": "~5.9.3",
+    "@biomejs/biome": "2.6.8",
+    "@playwright/test": "^1.56.0",
     "@types/node": "^24.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
-    "vitest": "^4.0.0",
-    "@playwright/test": "^1.56.0"
+    "typescript": "~5.9.3",
+    "vitest": "^4.0.0"
   },
   "packageManager": "pnpm@11.25.0"
 }

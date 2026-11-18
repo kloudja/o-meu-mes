@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import { examples } from '../fixtures';
-import { activeEvents, balance, budgetRemainder, completed, dueDate, initialPlan, obligations, pending, realized, savingPending, sourceTotals, summary, totalUnallocated, transact, DomainError, type Action, type FinancialAction } from '../../src/domain/engine';
-import { aid, rid, type State } from '../../src/domain/model';
-import { monthLabel, parseMoney } from '../../src/domain/money';
-import { sum } from '../../src/domain/validation';
+import { activeEvents, balance, budgetRemainder, completed, dueDate, initialPlan, obligations, pending, realized, savingPending, sourceTotals, summary, totalUnallocated, transact, DomainError, type Action, type FinancialAction } from '../../src/modules/finance/domain/engine';
+import { aid, rid, type State } from '../../src/modules/finance/domain/model';
+import { monthLabel, parseMoney } from '../../src/modules/finance/domain/money';
+import { sum } from '../../src/modules/finance/domain/validation';
 const A=aid('act-r'), B=aid('act-s'), M=aid('moey-r'), R=rid('em');
 const month=(s:State)=>s.months[s.selected];
 let sequence=0;

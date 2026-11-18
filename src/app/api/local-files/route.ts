@@ -1,6 +1,7 @@
+import { financialExport } from '@/modules/finance/contracts/export';
 import { writeAccess } from '@/server/access';
 import { createBackup } from '@/server/local-files.mjs';
-import { Repository } from '@/server/repository';
+import { Repository } from '@/modules/finance/infrastructure/repository';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,13 +18,7 @@ export async function POST(request: Request) {
       return Response.json(backup, { headers });
     }
     if (action === 'export') {
-      const { state, revision } = new Repository().read();
-      const { accounts, categories, reserves, base, recurring, months } = state;
-      const data = {
-        format: 'o-meu-mes-export', version: 1, exportedAt: new Date().toISOString(),
-        currency: 'EUR', moneyUnit: 'cent', revision,
-        accounts, categories, reserves, base, recurring, months,
-      };
+      const data = financialExport(new Repository().read(), new Date().toISOString());
       return new Response(JSON.stringify(data, null, 2) + '\n', {
         headers: { ...headers, 'Content-Type': 'application/json; charset=utf-8' },
       });

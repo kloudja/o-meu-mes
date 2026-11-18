@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
-import { accountFunding } from '../../src/domain/funding';
-import { balance, newMonth, realized, transact } from '../../src/domain/engine';
-import type { State } from '../../src/domain/model';
+import { accountFunding } from '../../src/modules/finance/domain/funding';
+import { balance, newMonth, realized, transact } from '../../src/modules/finance/domain/engine';
+import type { State } from '../../src/modules/finance/domain/model';
 function setup(){
   const s:State={selected:'2026-11',requests:{},accounts:[{id:'a',name:'Conta A',color:'#123456',restricted:false},{id:'b',name:'Conta B',color:'#abcdef',restricted:false}],categories:[],reserves:[{id:'r',name:'Reserva',accountId:'a'}],recurring:[],base:[],months:{}};
   s.months[s.selected]=newMonth(s,s.selected);
@@ -56,7 +56,7 @@ it('reparte várias origens e destinos sem reutilizar o mesmo excedente e mostra
   const r=report(s);expect(r.suggestions.map(x=>[x.source.id,x.destination.id,x.amount])).toEqual([['b','a',10000],['c','d',3000],['b','d',2000]]);expect(r.suggested).toBe(15000);expect(r.uncovered).toBe(3000);
   const action={type:'recordSuggestedTransfers',period:s.selected,date:'2026-11-03',routes:[
     {source:'a:b',destination:'a:a',amount:10000},{source:'a:c',destination:'a:d',amount:3000},{source:'a:b',destination:'a:d',amount:2000}
-  ]} as const satisfies import('../../src/domain/engine').Action;
+  ]} as const satisfies import('../../src/modules/finance/domain/engine').Action;
   expect(()=>transact(s,{...action,routes:action.routes.slice(0,2)},'partial')).toThrow('sugeridas mudaram');
   expect(()=>transact(s,{...action,period:'2026-12'},'wrong-month')).toThrow('sugeridas mudaram');
   const next=transact(s,action,'batch');

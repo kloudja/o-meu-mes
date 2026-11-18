@@ -1,7 +1,7 @@
 import { expect, it } from 'vitest';
 import { examples } from '../fixtures';
-import { balance, budgetRemainder, dueDate, transact } from '../../src/domain/engine';
-import { knownBankAvailability } from '../../src/domain/funding';
+import { balance, budgetRemainder, dueDate, transact } from '../../src/modules/finance/domain/engine';
+import { knownBankAvailability } from '../../src/modules/finance/domain/funding';
 
 it.each([
   ['2026-01-29','2027-02','2027-02-28'],

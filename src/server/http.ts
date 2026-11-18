@@ -1,6 +1,6 @@
-import { Repository } from './repository';
-import { parseCommand } from './input';
-import { DomainError } from '../domain/validation';
+import { Repository } from '../modules/finance/infrastructure/repository';
+import { parseCommand } from '../modules/finance/contracts/command-schema';
+import { DomainError } from '../modules/finance/domain/validation';
 import { localAccess, writeAccess } from './access';
 
 export function errorResponse(error:unknown){

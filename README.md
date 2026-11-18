@@ -77,7 +77,7 @@ Consulte os [resultados da recuperação](docs/FASE_5_RESULTADOS.md) e as [regra
 
 ## GitHub Actions
 
-O workflow [CI](.github/workflows/ci.yml) corre em cada push para `master`. Também pode iniciá-lo em **Actions → CI → Run workflow**, depois de o ficheiro chegar ao ramo principal. Usa um runner Windows com Edge para cobrir também os scripts de arranque e restauro. Instala com `pnpm install --frozen-lockfile`, reutiliza a cache da pnpm e executa os comandos de verificação acima. O projeto não tem um linter configurado.
+O workflow [CI](.github/workflows/ci.yml) corre em cada push para `master`. Também pode iniciá-lo em **Actions → CI → Run workflow**, depois de o ficheiro chegar ao ramo principal. Usa um runner Windows com Edge para cobrir também os scripts de arranque e restauro. Instala com `pnpm install --frozen-lockfile`, reutiliza a cache da pnpm e executa os comandos de verificação acima. A etapa `pnpm quality` verifica as fronteiras de módulos, a análise estática e a formatação. O mapa de módulos e o âmbito da formatação constam dos [resultados da MU0](docs/multiutilizador/FASE_MU0_RESULTADOS.md).
 
 Configure `origin` com o URL completo do repositório, incluindo o nome da conta GitHub. Se `origin` já existir, use `git remote set-url origin <URL>`. Depois do primeiro push, confirme que `master` é o ramo predefinido. Se o separador **Actions** indicar que os workflows estão desativados, reveja **Settings → Actions → General** e permita as ações usadas pelo workflow.
 

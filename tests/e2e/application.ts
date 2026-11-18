@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test as base, type Page } from '@playwright/test';
 import { connect, migrate } from '../../src/server/storage.mjs';
-import { persist } from '../../src/server/repository';
+import { persist } from '../../src/modules/finance/infrastructure/repository';
 import { examples, writeTestCatalog } from '../fixtures';
 
 type Application = { url: string; path: string };

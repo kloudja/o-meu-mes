@@ -1,8 +1,8 @@
 import { goToScreen } from './navigation';
 import { expect, test } from './application';
 import type { Page, APIRequestContext } from '@playwright/test';
-import type { Action } from '../../src/domain/engine';
-import type { State } from '../../src/domain/model';
+import type { Action } from '../../src/modules/finance/domain/engine';
+import type { State } from '../../src/modules/finance/domain/model';
 
 const dialog=(page:Page)=>page.getByRole('dialog');
 const nav=(page:Page,name:string)=>page.getByRole('navigation').getByRole('button',{name,exact:true});

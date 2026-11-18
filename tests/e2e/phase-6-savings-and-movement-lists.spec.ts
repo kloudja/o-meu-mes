@@ -1,6 +1,6 @@
 import { expect, test } from './application';
 import { goToScreen } from './navigation';
-import type { State } from '../../src/domain/model';
+import type { State } from '../../src/modules/finance/domain/model';
 
 test('os cabeçalhos ordenam os movimentos e partilham a ordem com os filtros', async ({ page, openExamples }, info) => {
   await openExamples(page);

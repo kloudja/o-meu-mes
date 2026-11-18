@@ -1,9 +1,9 @@
 import { expect, test } from './application';
 import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { goToScreen } from './navigation';
-import type { Action } from '../../src/domain/engine';
-import type { Confirmed } from '../../src/server/repository';
-import type { Month } from '../../src/domain/model';
+import type { Action } from '../../src/modules/finance/domain/engine';
+import type { Confirmed } from '../../src/modules/finance/infrastructure/repository';
+import type { Month } from '../../src/modules/finance/domain/model';
 
 const dialog=(page:Page)=>page.getByRole('dialog');
 const confirm=(page:Page)=>dialog(page).getByRole('button',{name:'Confirmar',exact:true});

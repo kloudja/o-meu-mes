@@ -5,8 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { chromium, expect as browserExpect } from '@playwright/test';
 import { expect, it } from 'vitest';
-import { balance, realized, sourceTotals, summary, type Action } from '../../src/domain/engine';
-import type { Command, Confirmed } from '../../src/server/repository';
+import { balance, realized, sourceTotals, summary, type Action } from '../../src/modules/finance/domain/engine';
+import type { Command, Confirmed } from '../../src/modules/finance/infrastructure/repository';
 import { writeTestCatalog } from '../fixtures';
 
 function windowsCommand(path: string, command: string, port?: number) {

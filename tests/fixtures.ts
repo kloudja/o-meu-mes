@@ -1,8 +1,8 @@
 import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import type { State, Line } from '../src/domain/model';
-import { aid, rid } from '../src/domain/model';
-import { newMonth } from '../src/domain/engine';
+import type { State, Line } from '../src/modules/finance/domain/model';
+import { aid, rid } from '../src/modules/finance/domain/model';
+import { newMonth } from '../src/modules/finance/domain/engine';
 const line=(id:string,name:string,plan:number,accountId:string,categoryId:string,extra:Partial<Line>={}):Line=>({id,name,plan,accountId,categoryId,kind:'expense',...extra});
 export function examples():State {
   const s:State={selected:'2026-11',requests:{},months:{},
