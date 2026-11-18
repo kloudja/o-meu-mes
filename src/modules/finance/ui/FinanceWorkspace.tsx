@@ -54,6 +54,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
   const [receipt,setReceipt]=useState<(PaymentReceipt&{expiresAt:number})|null>(null);
   const pendingReceipt=useRef<PaymentReceipt|null>(null);
   const pendingRemainderSaving=useRef<RemainderSaving|null>(null);
+  const pendingSavingFocus=useRef<string|null>(null);
   const showReceipt=(confirmation:PaymentReceipt)=>setReceipt({...confirmation,expiresAt:Date.now()+10000});
   const shownReceipt=useRef<typeof receipt>(null);
   const [conflict,setConflict]=useState(false);
@@ -115,6 +116,13 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
     if(!detail.closest('.movement')?.querySelector('[data-pay]'))detail.focus({preventScroll:true});
     confirmation?.scrollIntoView({block:'nearest'});
   },[receipt,modal,busy,m.period]);
+  useLayoutEffect(()=>{
+    if(modal||busy||uncertain||!pendingSavingFocus.current)return;
+    const detail=document.getElementById(`detail-${pendingSavingFocus.current}`);
+    const fallback=document.getElementById(screen==='plan'?'tab-saving':'planned-savings-title');
+    pendingSavingFocus.current=null;
+    (detail??fallback)?.focus({preventScroll:true});
+  },[modal,busy,uncertain,screen]);
   const set=(key:string,v:string)=>{setValues(x=>({...x,[key]:v}));setError('');setErrorCode('');setInitialErrorSource('');};
   const sourceName=(id:string)=>sources.find(a=>a.id===id)?.name??(id.startsWith('a:')?nameOf(id.slice(2)):'Origem por indicar');
   const receiptText=(event:Month['events'][number])=>{
@@ -399,11 +407,8 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
     setErrorCode(e instanceof DomainError?e.code:'');
   }
   function focusSavingDetail(lineId:string){
-    requestAnimationFrame(()=>{
-      const detail=document.getElementById(`detail-${lineId}`);
-      const fallback=document.getElementById(screen==='plan'?'tab-saving':'planned-savings-title');
-      (detail??fallback)?.focus({preventScroll:true});
-    });
+    // Restore focus only after the dialog is removed and the controls are enabled.
+    pendingSavingFocus.current=lineId;
   }
   async function safe(action:Action,text:string){if(conflict)return;try{await run(action,text,undefined,modal?.revision??store.revision);}catch(e){if(reportConflict(e))return;if(modal){formFailure(e);}else setGlobalError((e as Error).message);}}
   async function retryPending(){try{

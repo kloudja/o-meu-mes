@@ -220,6 +220,9 @@ for (const { amount, actual, deviation, cents, partial } of [
   { amount: '115', actual: '115,00', deviation: '+15,00', cents: 11500, partial: false },
 ]) {
   test(`concluir reforço do mês por ${amount} € preserva o plano e permite anular`, async ({ page, request, openExamples }, info) => {
+    // Exercise the focus hand-off with slower rendering, as on a shared CI runner.
+    const browser = await page.context().newCDPSession(page);
+    await browser.send('Emulation.setCPUThrottlingRate', { rate: 6 });
     await openExamples(page);
     await goToScreen(page, 'Mês');
     await page.getByRole('button', { name: 'Guardar plano inicial', exact: true }).click();
@@ -242,6 +245,7 @@ for (const { amount, actual, deviation, cents, partial } of [
     await dialog.getByRole('button', { name: 'Confirmar', exact: true }).click();
     await expect(goal).toContainText('Concluído');
     await expect(save).toHaveCount(0);
+    await expect(dialog).toHaveCount(0);
     await expect(details).toBeFocused();
     await page.reload();
     await goToScreen(page, 'Plano e movimentos');
