@@ -1,0 +1,5 @@
+# Manter os finais de linha consistentes no checkout local e na CI.
+* text=auto eol=lf
+
+# Os scripts de arranque Windows usam CRLF.
+*.cmd text eol=crlf
