@@ -1,12 +1,20 @@
 import { goToScreen } from './navigation';
 import { existsSync, readFileSync } from 'node:fs';
-import { expect, test } from '@playwright/test';
+import { expect, test } from './application';
 
-test.skip(process.env.OMEUMES_E2E_ISOLATED !== '1', 'Usar a base isolada de scripts/test-browser.mjs.');
+test('dados locais estão ocultos na utilização habitual', async ({ page }) => {
+  await page.goto('/');
+  await expect(page).toHaveTitle('O meu mês');
+  await expect(page.locator('.storage-banner')).toHaveCount(0);
+  await goToScreen(page, 'Definições');
+  await expect(page.getByRole('region', { name: 'Dados locais' })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Criar backup' })).toHaveCount(0);
+});
 
 for (const width of [1366, 360, 390]) {
   test.describe(`dados locais a ${width} px`, () => {
     test.use({
+      showLocalData: true,
       viewport: { width, height: width === 1366 ? 768 : 820 },
       isMobile: width !== 1366, hasTouch: width !== 1366, locale: 'pt-PT',
     });
@@ -15,6 +23,9 @@ for (const width of [1366, 360, 390]) {
       await page.goto('/');
       await goToScreen(page, 'Definições');
       const panel = page.getByRole('region', { name: 'Dados locais' });
+      await expect(panel).toBeVisible();
+      const catalog = (await page.locator('.settings-grid').boundingBox())!;
+      expect((await panel.boundingBox())!.y).toBeGreaterThanOrEqual(catalog.y + catalog.height);
       const backup = panel.getByRole('button', { name: 'Criar backup' });
       const exportData = panel.getByRole('button', { name: 'Exportar dados' });
       const restore = panel.getByText('Restaurar para outro ficheiro', { exact: true });
@@ -39,7 +50,7 @@ for (const width of [1366, 360, 390]) {
         await expect(panel.getByRole('alert')).toContainText('tente novamente');
         await expect(panel.getByText('Backup verificado', { exact: true })).toHaveCount(0);
         await expect(backup).toBeFocused();
-        await page.screenshot({ path: 'docs/capturas/fase-5/backup-falha-1366.png', animations: 'disabled' });
+        await page.screenshot({ path: test.info().outputPath('fase-5/backup-falha-1366.png'), animations: 'disabled' });
       }
       const result = page.waitForResponse(response => response.url().endsWith('action=backup') && response.ok());
       if (width === 1366) await backup.press('Enter');
@@ -73,18 +84,14 @@ for (const width of [1366, 360, 390]) {
       });
       await expect(panel.getByText(/Consulte as transferências do navegador/)).toBeVisible();
       if (width === 1366) {
-        await panel.screenshot({ path: 'docs/capturas/fase-5/dados-locais-1366.png', animations: 'disabled' });
+        await panel.screenshot({ path: test.info().outputPath('fase-5/dados-locais-1366.png'), animations: 'disabled' });
       } else {
         await restore.evaluate(element => element.scrollIntoView({ block: 'center' }));
-        await page.screenshot({ path: `docs/capturas/fase-5/restauro-${width}.png`, animations: 'disabled' });
+        await page.screenshot({ path: test.info().outputPath(`fase-5/restauro-${width}.png`), animations: 'disabled' });
         await panel.evaluate(element => { element.scrollIntoView({ block: 'start' }); window.scrollBy(0, -72); });
-        await page.screenshot({ path: `docs/capturas/fase-5/dados-locais-${width}.png`, animations: 'disabled' });
+        await page.screenshot({ path: test.info().outputPath(`fase-5/dados-locais-${width}.png`), animations: 'disabled' });
       }
 
-      await page.goto('/demo');
-      await goToScreen(page, 'Definições');
-      await expect(page.getByRole('button', { name: 'Repor exemplos', exact: true })).toBeVisible();
-      await expect(page.getByRole('button', { name: 'Criar backup' })).toHaveCount(0);
     });
   });
 }

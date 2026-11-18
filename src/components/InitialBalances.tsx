@@ -1,4 +1,5 @@
 import { inputMoney, money, monthLabel } from '@/domain/money';
+import { MoneyInput } from './MoneyInput';
 
 interface MissingBalance { id:string; name:string; suggestion?:{period:string;amount:number}|null }
 
@@ -11,20 +12,22 @@ export function InitialBalances({sources,values,onChange,errorSource,error}:{
 }){
   if(!sources.length)return null;
   return <fieldset className="initial-balances">
-    <legend>Falta indicar o saldo no início deste mês</legend>
-    <p>Para calcular o resultado, indique quanto já existia antes dos movimentos deste mês. Estes valores são separados do montante que vai registar agora.</p>
-    {sources.map((source,index)=><div key={source.id}>
-      <label>Saldo inicial — {source.name} (€)
-        <input autoFocus={index===0} inputMode="decimal" name={`initial-${source.id}`} value={values[`initial:${source.id}`]??''}
-          placeholder="Por indicar" required onChange={e=>onChange(source.id,e.target.value)}
+    <legend>{sources.some(source=>!source.id.startsWith('r:'))?'Saldos a indicar para o registo':'Total acumulado da poupança (opcional)'}</legend>
+    {sources.map((source,index)=>{
+      const reserve=source.id.startsWith('r:');
+      const label=`${reserve?'Total acumulado antes deste registo':'Saldo inicial'} — ${source.name} (€)`;
+      return <div key={source.id}>
+      <label>{label}
+        <MoneyInput autoFocus={index===0&&!reserve} name={`initial-${source.id}`} aria-label={label} value={values[`initial:${source.id}`]??''}
+          placeholder={reserve?inputMoney(source.suggestion?.amount??0):'Por indicar'} required={!reserve} onValue={value=>onChange(source.id,value)}
           aria-invalid={errorSource===source.id} aria-describedby={`hint-${source.id}${errorSource===source.id?' form-error':''}`}/>
       </label>
-      <small id={`hint-${source.id}`}>{source.id.startsWith('r:')?'Se esta reserva começou vazia, indique 0,00 €. Não inclua o reforço de agora.':'Indique apenas o saldo da conta principal, sem somar as reservas.'}</small>
+      <small id={`hint-${source.id}`}>{reserve?`Indique todo o dinheiro que já está nesta poupança antes deste movimento. Em branco, é usado ${money(source.suggestion?.amount??0)}${source.suggestion?` de ${monthLabel(source.suggestion.period)}`:''}.`:'Indique o saldo da conta antes dos movimentos deste mês, sem somar as poupanças.'}</small>
       {source.suggestion&&<p><button className="text-button" type="button" onClick={()=>onChange(source.id,inputMoney(source.suggestion!.amount))}>
         Usar sugestão de {monthLabel(source.suggestion.period)} · {money(source.suggestion.amount)}
       </button><br/><small>Confirme o valor que vê no banco antes de guardar.</small></p>}
       {errorSource===source.id&&<p id="form-error" className="inline-error" role="alert">{error}</p>}
-    </div>)}
+    </div>;})}
     <p>Só será aplicado ao confirmar a operação. Cancelar não altera saldos.</p>
   </fieldset>;
 }

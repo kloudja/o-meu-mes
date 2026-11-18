@@ -6,6 +6,7 @@ import { expect, it, vi } from 'vitest';
 import { createBackup, restoreBackup } from '../../src/server/local-files.mjs';
 import { connect, migrate } from '../../src/server/storage.mjs';
 import { Repository } from '../../src/server/repository';
+import { writeTestCatalog } from '../fixtures';
 
 vi.mock('node:fs', async importOriginal => {
   const fs = await importOriginal<typeof import('node:fs')>();
@@ -14,6 +15,7 @@ vi.mock('node:fs', async importOriginal => {
 
 function setup() {
   const root = mkdtempSync(join(tmpdir(), 'omeumes-test-files-'));
+  writeTestCatalog(root);
   const source = join(root, 'original.sqlite');
   migrate(source);
   return { root, source, repo: new Repository(source) };

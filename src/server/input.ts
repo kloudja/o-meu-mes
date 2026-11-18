@@ -5,17 +5,20 @@ import { DomainError, validId, validPeriod } from '../domain/validation';
 type Shape=Record<string,'string'|'number'|'boolean'|'money'|'object'|ShapeSpec>;
 interface ShapeSpec {shape:Shape; optional?:boolean; list?:boolean}
 const opt=(shape:Shape):ShapeSpec=>({shape,optional:true});
-const line:Shape={id:'string',name:'string',kind:'string',plan:'money',accountId:'string',categoryId:'string',reserveId:'string',variable:'boolean'};
+const line:Shape={id:'string',name:'string',kind:'string',plan:'money',accountId:'string',categoryId:'string',reserveId:'string',variable:'boolean',dueDate:'string'};
+const movementEntry:Shape={type:'string',amount:'number',date:'string',source:'string',complete:'boolean',initials:'object'};
 const financial:Record<string,Shape>={
-  execute:{type:'string',lineId:'string',amount:'number',date:'string',source:'string',complete:'boolean',total:'boolean',description:'string',initials:'object',includedInTotal:'string'},
+  execute:{...movementEntry,lineId:'string',total:'boolean',description:'string',includedInTotal:'string',reserveAfter:'number'},
   transfer:{type:'string',source:'string',destination:'string',amount:'number',date:'string',initials:'object'},
   reconcile:{type:'string',source:'string',amount:'number',date:'string',note:'string'}
 };
 const shapes:Record<string,Shape>={...financial,recordSuggestedTransfers:{type:'string',date:'string',period:'string',routes:{list:true,shape:{source:'string',destination:'string',amount:'number'}}},month:{type:'string',period:'string'},snapshot:{type:'string',date:'string'},initial:{type:'string',source:'string',amount:'number'},line:{type:'string',line:opt(line),target:'string'},removeLine:{type:'string',id:'string',target:'string'},void:{type:'string',id:'string'},correct:{type:'string',id:'string',replacement:'object'},occurrence:{type:'string',id:'string',mode:'string',lineId:'string'},account:{type:'string',account:opt({id:'string',name:'string',color:'string',restricted:'boolean',archived:'boolean'})},category:{type:'string',category:opt({id:'string',name:'string',archived:'boolean'})},reserve:{type:'string',reserve:opt({id:'string',name:'string',accountId:'string'})},recurring:{type:'string',definition:opt({id:'string',name:'string',date:'string',frequency:'string',active:'boolean',amount:'money',accountId:'string',reserveId:'string',reminderText:'string',reminderDays:'number'})}};
-shapes.line.execution=opt({amount:'number',date:'string',source:'string',initials:'object',description:'string'});
-shapes.save={type:'string',reserveId:'string',lineId:'string',source:'string',amount:'number',date:'string',initials:'object'};
+shapes.line.execution=opt({amount:'number',date:'string',source:'string',initials:'object',description:'string',reserveAfter:'number'});
+shapes.save={...movementEntry,reserveId:'string',lineId:'string'};
 shapes.associateSaving={type:'string',lineId:'string',eventId:'string',amount:'number'};
 shapes.deleteAccount={type:'string',id:'string'};
+// Accept the old payload so already committed account commands can still be replayed.
+(shapes.account.account as ShapeSpec).shape.baseInitial='money';
 function invalid():never{throw new DomainError('INPUT','O pedido contém campos inválidos. Reveja o formulário.');}
 function object(v:unknown):v is Record<string,unknown>{return v!==null&&typeof v==='object'&&!Array.isArray(v);}
 function check(v:unknown,shape:Shape){

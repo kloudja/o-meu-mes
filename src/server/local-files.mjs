@@ -32,7 +32,7 @@ export function privatePath(path) {
       throw new LocalFileError('Escolha um caminho fora de pastas public.');
     }
     if (process.env.OMEUMES_TEST_MODE === '1' && !/[\\/]omeumes-test-[^\\/]+[\\/]/.test(candidate)) {
-      throw new LocalFileError('Os ensaios só podem usar pastas omeumes-test-*.');
+      throw new LocalFileError('Os testes automatizados só podem usar pastas omeumes-test-*.');
     }
   }
   return canonical;

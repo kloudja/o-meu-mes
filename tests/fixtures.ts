@@ -1,6 +1,8 @@
-import type { State, Line } from '../domain/model';
-import { aid, rid } from '../domain/model';
-import { newMonth } from '../domain/engine';
+import { writeFileSync } from 'node:fs';
+import { join } from 'node:path';
+import type { State, Line } from '../src/domain/model';
+import { aid, rid } from '../src/domain/model';
+import { newMonth } from '../src/domain/engine';
 const line=(id:string,name:string,plan:number,accountId:string,categoryId:string,extra:Partial<Line>={}):Line=>({id,name,plan,accountId,categoryId,kind:'expense',...extra});
 export function examples():State {
   const s:State={selected:'2026-11',requests:{},months:{},
@@ -14,4 +16,9 @@ export function examples():State {
   m.initials=Object.fromEntries(s.accounts.map(a=>[aid(a.id),{ 'act-r':95000,'act-s':25000,'moey-r':100000,'moey-s':20000,'san':10000,'bank':null }[a.id]??null]));
   Object.assign(m.initials,{[rid('em')]:30000,[rid('car')]:0,[rid('gas')]:null});
   s.months[s.selected]=m;return s;
+}
+
+export function writeTestCatalog(directory:string){
+  const {accounts,categories}=examples();
+  writeFileSync(join(directory,'catalog.local.json'),JSON.stringify({accounts,categories}),{flag:'wx'});
 }

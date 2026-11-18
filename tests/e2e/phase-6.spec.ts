@@ -1,12 +1,13 @@
 import { goToScreen } from './navigation';
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from './application';
+import type { Page } from '@playwright/test';
 
 const d = (p: Page) => p.getByRole('dialog');
 const noOverflow = async (p: Page) => expect(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
-test('a compra noutra conta atualiza o painel e a sugestão de transferência',async({page})=>{
+test('a compra noutra conta atualiza o painel e a sugestão de transferência',async({page,openExamples})=>{
   await page.setViewportSize({width:390,height:844});
-  await page.goto('/demo');
+  await openExamples(page);
   await expect(page.locator('.app-shell')).toHaveAttribute('data-ready','true');
   await goToScreen(page,'Definições');
   const bank=page.locator('.catalog-row').filter({hasText:'BankInter A'});
@@ -20,7 +21,7 @@ test('a compra noutra conta atualiza o painel e a sugestão de transferência',a
   const source=d(page).getByRole('combobox',{name:'Origem do dinheiro'});
   await source.fill('sant');
   await expect(d(page).getByRole('option',{name:'Santander',exact:true})).toBeVisible();
-  await page.screenshot({path:'docs/capturas/fase-6/seletor-conta-390.png'});
+  await page.screenshot({path:test.info().outputPath('fase-6/seletor-conta-390.png')});
   await source.press('ArrowDown');
   await source.press('Enter');
   await expect(source).toHaveValue('Santander');
@@ -29,7 +30,7 @@ test('a compra noutra conta atualiza o painel e a sugestão de transferência',a
   const santander=accounts.locator('.account-mini').filter({hasText:'Santander'});
   await expect(santander).toContainText('70,00');
   await expect(santander).toContainText('-80,00');
-  await expect(page.locator('.funds-alert')).toContainText('80,00');
+  await expect(page.getByRole('region',{name:'Dinheiro em falta nas contas'})).toContainText('Faltam 80,00 €');
   await goToScreen(page,'Contas');
   await page.getByRole('button',{name:'Quanto transferir para cada conta'}).click();
   await expect(d(page).getByTestId('route-act-r-san')).toContainText('80,00');
@@ -37,12 +38,12 @@ test('a compra noutra conta atualiza o painel e a sugestão de transferência',a
 });
 
 for (const width of [1366, 360, 390]) {
-  test(`percursos prioritários e teclado — ${width}`, async ({ page }) => {
+  test(`percursos prioritários e teclado — ${width}`, async ({ page,openExamples }) => {
     await page.setViewportSize({ width, height: width === 1366 ? 768 : 844 });
-    await page.goto('/demo');
+    await openExamples(page);
     await expect(page.locator('.app-shell')).toHaveAttribute('data-ready', 'true');
     await noOverflow(page);
-    await page.screenshot({ path: `docs/capturas/fase-6/mes-${width}.png` });
+    await page.screenshot({ path: test.info().outputPath(`fase-6/mes-${width}.png`) });
     await page.keyboard.press('Tab');
     await expect(page.getByRole('link', { name: 'Saltar para o conteúdo' })).toBeFocused();
     await page.keyboard.press('Enter');
@@ -77,7 +78,7 @@ for (const width of [1366, 360, 390]) {
     await goToScreen(page,'Plano e movimentos');
     await page.getByRole('button', { name: 'Detalhe de Serviços Essenciais', exact: true }).click();
     await d(page).getByRole('button', { name: 'Editar plano atual' }).click();
-    await d(page).getByLabel('Plano atual (€) · opcional').fill('120');
+    await d(page).getByLabel('Valor total da despesa (€)').fill('120');
     await d(page).getByRole('button', { name: 'Confirmar', exact: true }).click();
     await page.getByRole('button', { name: 'Detalhe de Serviços Essenciais', exact: true }).click();
     await expect(d(page).locator('.detail-values>div').filter({ hasText: /^Plano inicial/ })).toContainText('100,00');
@@ -94,7 +95,7 @@ for (const width of [1366, 360, 390]) {
     await expect(d(page).locator('.detail-values>div').filter({ hasText: /^Realizado/ })).toContainText('60,00');
     await expect(d(page).locator('.history')).toContainText('20,00');
     await noOverflow(page);
-    await page.screenshot({ path: `docs/capturas/fase-6/compras-${width}.png` });
+    await page.screenshot({ path: test.info().outputPath(`fase-6/compras-${width}.png`) });
     await page.keyboard.press('Escape');
 
     await goToScreen(page, 'Poupanças');
@@ -107,11 +108,11 @@ for (const width of [1366, 360, 390]) {
     await goToScreen(page, 'Contas');
     const principal = page.locator('.account-card').filter({ has: page.getByText('Moey! A', { exact: true }) });
     await expect(principal.locator('.balance-value')).toContainText('1.000,00');
-    const launch = page.getByRole('button', { name: 'Quanto transferir para cada conta', exact: true });
+    const launch = page.getByRole('button', { name: /^Quanto transferir para cada conta/ });
     await launch.click();
     await expect(d(page)).toContainText('BankInter A · Por apurar. Saldo inicial por indicar.');
     await expect(d(page).getByTestId('route-act-r-san')).toContainText('50,00');
-    await page.screenshot({ path: `docs/capturas/fase-6/transferencias-${width}.png` });
+    await page.screenshot({ path: test.info().outputPath(`fase-6/transferencias-${width}.png`) });
     await d(page).getByTestId('route-act-r-san').getByRole('button', { name: 'Preparar esta transferência' }).click();
     await expect(d(page).getByLabel('Destino', { exact: true })).toHaveValue('Santander');
     await d(page).getByRole('button', { name: 'Cancelar', exact: true }).click();
@@ -126,15 +127,15 @@ for (const width of [1366, 360, 390]) {
     await expect(page.getByTestId('line-services')).toContainText('100,00');
     await page.getByRole('tab', { name: 'Poupanças' }).click();
     await page.getByTestId('line-save-em').getByRole('button', { name: 'Poupar', exact: true }).click();
-    await expect(d(page)).toContainText('Se esta reserva começou vazia, indique 0,00 €');
-    await expect(d(page).getByLabel('Saldo inicial — Moey! A (€)', { exact: true })).toBeVisible();
-    await page.screenshot({ path: `docs/capturas/fase-6/saldos-em-falta-${width}.png` });
+    await expect(d(page)).toContainText('Total acumulado antes deste registo');
+    await expect(d(page).getByLabel('Saldo inicial — Moey! A (€)', { exact: true })).toHaveCount(0);
+    await page.screenshot({ path: test.info().outputPath(`fase-6/saldos-em-falta-${width}.png`) });
     await page.keyboard.press('Escape');
     await goToScreen(page, 'Pagamentos recorrentes');
     await page.getByTestId('occ-google').getByRole('button', { name: 'Adicionar ao plano' }).click();
     await expect(page.getByTestId('occ-google')).toContainText('Adicionado ao plano');
     await noOverflow(page);
-    await page.screenshot({ path: `docs/capturas/fase-6/lembrete-${width}.png` });
+    await page.screenshot({ path: test.info().outputPath(`fase-6/lembrete-${width}.png`) });
   });
 }
 

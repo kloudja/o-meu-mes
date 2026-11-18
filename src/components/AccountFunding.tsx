@@ -3,15 +3,17 @@ import { useEffect, useRef, useState } from 'react';
 import { canonical, type Action } from '@/domain/engine';
 import { accountFunding, transferRoutes } from '@/domain/funding';
 import { money } from '@/domain/money';
-import { daysInMonth, DomainError, validDate } from '@/domain/validation';
-import type { Account, Month, State } from '@/domain/model';
+import { daysInMonth, DomainError, sum, validDate } from '@/domain/validation';
+import type { Account, Month } from '@/domain/model';
 import type { Confirmed } from '@/server/repository';
 import { Dialog } from './Dialog';
 import { Icon } from './Icon';
+import { PaymentReasons } from './PaymentReasons';
 
 type Batch = Extract<Action,{type:'recordSuggestedTransfers'}>;
 interface Props {
-  state:State;month:Month;demo:boolean;open:boolean;onOpenChange:(open:boolean)=>void;
+  month:Month;open:boolean;onOpenChange:(open:boolean)=>void;
+  report:ReturnType<typeof accountFunding>;
   busy:boolean;uncertain:boolean;disabled:boolean;dateDefault:string;revision?:number;
   onPrepare:(account:Account,amount:number,source:Account,date:string)=>void;
   onRecord:(action:Batch,revision?:number)=>Promise<void>;
@@ -19,17 +21,22 @@ interface Props {
 }
 
 export function AccountFunding(props:Props){
+  const {suggested,total,reimbursements}=props.report;
+  const amount=suggested===0&&total===null?'Por apurar':money(suggested);
   return <>
     <section className="panel funding-launch" aria-label="Preparar dinheiro nas contas">
-      <div><h2>Dinheiro necessário em cada conta</h2><p>Veja quanto precisa de transferir para cobrir o que ainda está por pagar ou pôr de parte.</p></div>
-      <button id="funding-launch" className="button primary" disabled={props.disabled} onClick={()=>props.onOpenChange(true)}><Icon name="transfer" size={17}/>Quanto transferir para cada conta</button>
+      <div><h2>Dinheiro necessário em cada conta</h2><p>Veja as transferências para repor pagamentos feitos por outra conta e cobrir os compromissos do mês.</p>
+        {reimbursements.length>0&&<p className="funding-reimbursements">Pagamentos por outra conta · {money(sum(reimbursements.map(row=>row.amount)))} por repor</p>}
+      </div>
+      <button id="funding-launch" className="button primary" disabled={props.disabled} onClick={()=>props.onOpenChange(true)}>
+        <Icon name="transfer" size={17}/><span>Quanto transferir para cada conta</span><strong className="funding-button-amount">{amount}</strong>
+      </button>
     </section>
     {props.open&&<FundingReview {...props}/>}
   </>;
 }
 
-function FundingReview({state,month,demo,onOpenChange,busy,uncertain,disabled,dateDefault,revision,onPrepare,onRecord,refresh,retry}:Props){
-  const report=accountFunding(state,month);
+function FundingReview({month,report,onOpenChange,busy,uncertain,disabled,dateDefault,revision,onPrepare,onRecord,refresh,retry}:Props){
   const current={period:month.period,revision,report};
   const [review,setReview]=useState(current);
   const [date,setDate]=useState(dateDefault);
@@ -39,7 +46,7 @@ function FundingReview({state,month,demo,onOpenChange,busy,uncertain,disabled,da
   const reviewButton=useRef<HTMLButtonElement>(null);
   const reviewAlert=useRef<HTMLDivElement>(null);
   const submitting=useRef(false);
-  const {suggestions,remaining,unassigned,suggested,accounts}=review.report;
+  const {suggestions,remaining,unassigned,suggested,accounts,reimbursements}=review.report;
   const routes=transferRoutes(suggestions);
   const sameMonth=review.period===month.period;
   const changed=!sameMonth||canonical(routes)!==canonical(transferRoutes(report.suggestions));
@@ -91,7 +98,7 @@ function FundingReview({state,month,demo,onOpenChange,busy,uncertain,disabled,da
       }else setReview(current);
     }finally{setRefreshing(false);}
   }
-  return <Dialog title="Quanto transferir para cada conta" demo={demo} onClose={close}>
+  return <Dialog title="Quanto transferir para cada conta" onClose={close}>
     <div className="dialog-body funding-body">
       {stale&&!uncertain&&<div ref={reviewAlert} className="warning" role="alert">
         <p>{!sameMonth?'O mês mudou.':changed?'As origens, os destinos ou os montantes sugeridos mudaram desde a revisão.':error?.code==='CONFLICT'||error?.code==='BATCH_CHANGED'?error.message:'Os dados foram atualizados desde a revisão.'} A lista abaixo é a que reviu. Reveja a nova lista ou prepare individualmente o que já fez no banco.</p>
@@ -100,12 +107,27 @@ function FundingReview({state,month,demo,onOpenChange,busy,uncertain,disabled,da
       </div>}
       <section className="funding-routes" aria-label="Transferências sugeridas">
         <h3>Transferências sugeridas</h3>
-        {suggestions.map(route=><article className="funding-route" key={JSON.stringify([route.source.id,route.destination.id])} data-testid={`route-${route.source.id}-${route.destination.id}`}>
-          <div><p className="funding-direction"><strong>{route.source.name}</strong><Icon name="arrow" size={16}/><strong>{route.destination.name}</strong></p><p className="funding-amount">{money(route.amount)}</p></div>
+        {suggestions.map(route=>{
+          const repayment=reimbursements.find(row=>row.source.id===route.source.id&&row.destination.id===route.destination.id);
+          const toReimburse=repayment?.suggested??0;
+          return <article className="funding-route" key={JSON.stringify([route.source.id,route.destination.id])} data-testid={`route-${route.source.id}-${route.destination.id}`}>
+          <div><p className="funding-direction"><strong>{route.source.name}</strong><Icon name="arrow" size={16}/><strong>{route.destination.name}</strong></p><p className="funding-amount">{money(route.amount)}</p>
+            {repayment&&toReimburse>0&&<><p>Reposição de pagamentos</p><PaymentReasons reasons={repayment.reasons} limit={toReimburse}/></>}
+            {route.amount>toReimburse&&<p>{money(route.amount-toReimburse)} para compromissos por realizar</p>}
+          </div>
           <button className="button small" disabled={blocked||!sameMonth} onClick={()=>{onOpenChange(false);onPrepare(route.destination,route.amount,route.source,date);}}>Preparar esta transferência</button>
-        </article>)}
+        </article>;})}
         {!suggestions.length&&<p>Não há transferências a sugerir entre contas à ordem.</p>}
       </section>
+      {reimbursements.length>0&&<details className="funding-payment-details">
+        <summary>Detalhe dos pagamentos por outra conta</summary>
+        <dl>{reimbursements.map(row=><div key={JSON.stringify([row.source.id,row.destination.id])}>
+          <dt>{row.source.name} → {row.destination.name}</dt><dd>{money(row.amount)} por repor</dd>
+          <dd className="payment-reason-details"><PaymentReasons reasons={row.reasons}/></dd>
+          {row.suggested<row.amount&&<small>{money(row.amount-row.suggested)} sem transferência sugerida</small>}
+        </div>)}</dl>
+        <p>As sugestões usam o excedente disponível na conta prevista depois dos seus compromissos.</p>
+      </details>}
       <section className="funding-outstanding" aria-label="Valores por cobrir e por apurar">
         {remaining.filter(row=>row.amount!==null&&row.amount>0).map(row=><p className="warning" key={row.account.id} data-testid={`uncovered-${row.account.id}`}>Ainda faltam {money(row.amount)} em {row.account.name}.{row.account.archived?' Conta arquivada.':''}</p>)}
         {unassigned.length>0&&<p className="warning">Por apurar · indique a conta de {unassigned.map(l=>l.name).join(', ')} para calcular as transferências.</p>}

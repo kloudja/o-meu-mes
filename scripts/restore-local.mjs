@@ -30,6 +30,7 @@ try {
     console.log('A copiar e verificar…');
     await restoreBackup(paths.source, paths.destination);
     console.log(`Restauro verificado: ${paths.destination}`);
+    console.log('Para abrir a cópia no endereço habitual, feche primeiro a instância de O meu mês.');
     console.log('Para regressar à base habitual, pare a cópia com Ctrl+C e abra Iniciar.cmd.');
     if (/^s(im)?$/i.test(await ask('Abrir a cópia agora? [s/N] '))) openPath = paths.destination;
     else console.log('Para abrir a cópia mais tarde, use Iniciar.cmd --base seguido do caminho entre aspas.');

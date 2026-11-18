@@ -1,9 +1,14 @@
 import { integer } from './validation';
+export function normalizeMoneyInput(value:string):string {
+  const input=value.trim().replace(/\s|€/g,'');
+  if(/^\d{1,3}(?:\.\d{3})+,\d{0,2}$/.test(input))return input.replaceAll('.','');
+  return input.replace('.',',');
+}
 export function parseMoney(value:string):number {
-  const s=value.trim().replace(/\s|€/g,'');
-  if(!/^(?:\d+|\d{1,3}(?:\.\d{3})+)(?:,\d{1,2})?$/.test(s)) throw new Error('Indique um montante válido, por exemplo 1.234,56.');
-  const [whole,fraction='']=s.replaceAll('.','').split(',');
-  const result=BigInt(whole)*100n+BigInt(fraction.padEnd(2,'0'));
+  const s=normalizeMoneyInput(value);
+  if(!/^(?:\d+(?:,\d{0,2})?|,\d{1,2})$/.test(s)) throw new Error('Indique um montante válido com até duas casas decimais, por exemplo 1234,56.');
+  const [whole,fraction='']=s.split(',');
+  const result=BigInt(whole||'0')*100n+BigInt(fraction.padEnd(2,'0'));
   if(result>BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('Montante demasiado elevado.');
   return Number(result);
 }

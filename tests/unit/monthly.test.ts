@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { examples } from '../../src/data/fixtures';
+import { examples } from '../fixtures';
 import { balance, budgetRemainder, dueDate, transact } from '../../src/domain/engine';
 import { knownBankAvailability } from '../../src/domain/funding';
 
@@ -57,5 +57,6 @@ it('separa sobra líquida da disponibilidade bancária e assinala valores por in
   expect(balance(month(),'r:em')).toBe(30000);
   month().lines.find(l=>l.id==='other')!.plan=null;
   expect(budgetRemainder(month())).toBeNull();
-  expect(knownBankAvailability(state,month())).toMatchObject({amount:null,partial:false});
+  // With ActivoBank A also excluded, the four other known forecasts total €1,235.
+  expect(knownBankAvailability(state,month())).toMatchObject({amount:123500,partial:true,knownCount:4});
 });

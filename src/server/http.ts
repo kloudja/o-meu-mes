@@ -1,7 +1,7 @@
 import { Repository } from './repository';
 import { parseCommand } from './input';
 import { DomainError } from '../domain/validation';
-import { accessMode, writeAccess } from './access';
+import { localAccess, writeAccess } from './access';
 
 export function errorResponse(error:unknown){
   if(error instanceof DomainError)return Response.json({code:error.code,message:error.message},{status:error.code==='CONFLICT'?409:422});
@@ -11,7 +11,7 @@ export function errorResponse(error:unknown){
   return Response.json({code:'STORAGE',message:'Não foi possível confirmar a gravação local. Os dados confirmados mantêm-se. Verifique o servidor e repita a mesma tentativa com segurança.'},{status:503});
 }
 export async function handleGet(request:Request,repo?:Repository){
-  if(!accessMode(request.headers))return Response.json({message:'Acesso indisponível.'},{status:403,headers:{'Cache-Control':'no-store'}});
+  if(!localAccess(request.headers))return Response.json({message:'Acesso indisponível.'},{status:403,headers:{'Cache-Control':'no-store'}});
   try{return Response.json((repo??new Repository()).read(new URL(request.url).searchParams.get('period')??undefined),{headers:{'Cache-Control':'no-store'}});}catch(e){return errorResponse(e);}
 }
 export async function handlePost(request:Request,repo?:Repository){

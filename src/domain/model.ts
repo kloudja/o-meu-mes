@@ -2,7 +2,7 @@ export type Kind = 'expense' | 'income' | 'saving' | 'investment';
 export interface Account { id:string; name:string; color:string; restricted:boolean; archived?:boolean }
 export interface Category { id:string; name:string; archived?:boolean }
 export interface Reserve { id:string; name:string; accountId:string }
-export interface Line { id:string; name:string; kind:Kind; plan:number|null; accountId:string; categoryId:string; reserveId?:string; variable?:boolean; expenseModeRevision?:string }
+export interface Line { id:string; name:string; kind:Kind; plan:number|null; accountId:string; categoryId:string; reserveId?:string; variable?:boolean; dueDate?:string; expenseModeRevision?:string }
 export interface Catalog { accounts:Account[]; categories:Category[]; reserves:Reserve[] }
 export interface Event {
   id:string; lineId?:string; amount:number; date:string; note:string; description?:string;

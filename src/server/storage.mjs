@@ -1,7 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 import { mkdirSync, existsSync, readFileSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
-import exampleCatalog from '../data/catalog.json' with {type:'json'};
 
 export const APP_ID=1330464083;
 const safe='BETWEEN -9007199254740991 AND 9007199254740991';
@@ -31,7 +30,14 @@ CREATE TABLE receipts(scope TEXT NOT NULL, request_id TEXT NOT NULL, canonical T
 CREATE INDEX events_line ON events(period,line_id);
 CREATE INDEX allocations_parent ON allocations(period,parent_id);
 CREATE INDEX occurrences_definition ON occurrences(definition_id,period);`,
-`CREATE TABLE excel_imports(period TEXT PRIMARY KEY REFERENCES months(period), payload TEXT NOT NULL CHECK(json_valid(payload))) STRICT;`
+`CREATE TABLE excel_imports(period TEXT PRIMARY KEY REFERENCES months(period), payload TEXT NOT NULL CHECK(json_valid(payload))) STRICT;`,
+`INSERT INTO base_lines (id, account_id, category_id, reserve_id, plan, payload)
+SELECT 'monthly-income:' || id, id, NULL, NULL, json_extract(payload, '$.baseInitial'),
+  json_object('id', 'monthly-income:' || id, 'name', 'Receita mensal · ' || json_extract(payload, '$.name'),
+    'kind', 'income', 'accountId', id, 'categoryId', '')
+FROM accounts WHERE json_type(payload, '$.baseInitial') = 'integer' AND json_extract(payload, '$.baseInitial') > 0;
+UPDATE accounts SET payload = json_remove(payload, '$.baseInitial') WHERE json_type(payload, '$.baseInitial') IS NOT NULL;
+UPDATE meta SET revision = revision + 1 WHERE id = 1 AND changes() > 0;`
 ];
 
 export function databasePath(){
@@ -73,7 +79,7 @@ export function migrate(path,steps=migrations){
       db.exec(`PRAGMA application_id=${APP_ID};`);
       if(lockedVersion===0&&!db.prepare('SELECT id FROM accounts LIMIT 1').get()){
         const localCatalog=resolve(dirname(path),'catalog.local.json');
-        const catalog=existsSync(localCatalog)?JSON.parse(readFileSync(localCatalog,'utf8')):exampleCatalog;
+        const catalog=existsSync(localCatalog)?JSON.parse(readFileSync(localCatalog,'utf8')):{accounts:[],categories:[]};
         for(const a of catalog.accounts){db.prepare('INSERT INTO accounts VALUES(?,?)').run(a.id,JSON.stringify(a));db.prepare('INSERT INTO origins VALUES(?,?,NULL)').run(`a:${a.id}`,a.id);}
         for(const c of catalog.categories)db.prepare('INSERT INTO categories VALUES(?,?)').run(c.id,JSON.stringify(c));
         const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Lisbon',year:'numeric',month:'2-digit'}).formatToParts(new Date());

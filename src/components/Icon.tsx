@@ -10,6 +10,7 @@ export function Icon({name,size=20}:{name:string;size?:number}){
     base:<><rect x="5" y="3" width="14" height="18" rx="2"/><path d="M9 8h6m-6 4h6m-6 4h4"/></>,
     settings:<><path d="m12 3 2 3 4-1 1 4 3 3-3 2-1 5-4-1-2 3-2-3-4 1-1-5-3-2 3-3 1-4 4 1Z"/><circle cx="12" cy="12" r="3"/></>,
     plus:<path d="M12 5v14M5 12h14"/>,
+    filter:<path d="M4 6h16M7 12h10m-7 6h4"/>,
     arrow:<path d="M5 12h14m-5-5 5 5-5 5"/>,
     check:<path d="m5 12 4 4L19 6"/>,
     close:<path d="m6 6 12 12M6 18 18 6"/>,

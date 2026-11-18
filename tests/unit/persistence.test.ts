@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { migrate, migrations, connect, databasePath } from '../../src/server/storage.mjs';
 import { Repository, persist, type Command, type Fault } from '../../src/server/repository';
 import { handleGet, handlePost } from '../../src/server/http';
-import { examples } from '../../src/data/fixtures';
+import { examples, writeTestCatalog } from '../fixtures';
 import { activeEvents, balance, completed, pending, previousSavingBalance, realized, type Action, type FinancialAction } from '../../src/domain/engine';
 import type { State } from '../../src/domain/model';
 const A='a:act-r',B='a:act-s',M='a:moey-r',R='r:em',P='2026-11';
@@ -51,12 +51,33 @@ it('elimina apenas a conta sem referências e os seus saldos por indicar numa tr
 });
 
 describe('Ajustes da experimentação em SQLite',()=>{
-  const reinforcement=(amount:number,lineId?:string,source=M):Action=>({type:'save',reserveId:'em',lineId,source,amount,date:P+'-05'});
+  const reinforcement=(amount:number,lineId?:string,source=M):Extract<Action,{type:'save'}>=>({type:'save',reserveId:'em',lineId,source,amount,date:P+'-05'});
   function savingFixture(){
     const state=examples();
     Object.assign(month(state).initials,{[A]:50000,[M]:20000,[R]:10000});
     return fixture(state);
   }
+
+  it('conclui por zero sem definir saldos e reabre o objetivo ao anular',()=>{
+    const state=examples();
+    const initialMonth=month(state);
+    initialMonth.initials[M]=null;
+    initialMonth.initials[R]=null;
+    const r=fixture(state);
+    const closing={...reinforcement(0),source:'',complete:true} as const;
+    unchanged(r,closing,'objetivo do mês');
+    unchanged(r,reinforcement(0,'save-em'),'explicitamente por zero');
+    const c=command(r,{...closing,lineId:'save-em'},'close-zero');
+    r.command(c);
+    expect(r.command(c).replay).toBe(true);
+    const saved=month(new Repository(r.path).read(P).state);
+    const goal=saved.lines.find(l=>l.id==='save-em')!;
+    expect(saved.events).toMatchObject([{id:'close-zero',lineId:goal.id,amount:0,deltas:{},complete:true}]);
+    expect([goal.plan,realized(saved,goal.id),pending(saved,goal),balance(saved,M),balance(saved,R)]).toEqual([10000,0,0,null,null]);
+    unchanged(r,{...closing,lineId:goal.id},'objetivo do mês');
+    const reopened=month(act(r,{type:'void',id:'close-zero'}));
+    expect(pending(reopened,goal)).toBe(10000);
+  });
 
   it('distingue objetivo e reforço extra e associa sem novo efeito financeiro',()=>{
     const r=savingFixture();
@@ -159,12 +180,35 @@ describe('Ajustes da experimentação em SQLite',()=>{
 });
 
 describe('Migrações e isolamento físico',()=>{
-  it('base nova só tem metadados confirmados e mês vazio; reaplicar não duplica',()=>{
-    const p=path();const info=migrate(p);expect(info.version).toBe(3);const r=new Repository(p),before=r.read();
-    expect(before.state.accounts).toHaveLength(6);expect(before.state.categories).toHaveLength(14);
+  it('converte os montantes habituais em receitas mensais numa única migração',()=>{
+    const p=path();
+    migrate(p,migrations.slice(0,3));
+    const state=examples();
+    const accounts=state.accounts.map(account=>({...account,baseInitial:account.id==='moey-s'?13000:0}));
+    const db=connect(p);
+    try{db.exec('BEGIN IMMEDIATE');persist(db,{...state,accounts});db.exec('COMMIT');}finally{db.close();}
+    const repository=new Repository(p);
+    const before=repository.read(P);
+    expect(migrate(p).version).toBe(4);
+    const after=repository.read(P);
+    expect(after.state.accounts).toEqual(state.accounts);
+    expect(after.state.months).toEqual(before.state.months);
+    expect(after.state.base.slice(0,-1)).toEqual(before.state.base);
+    expect(after.state.base.at(-1)).toEqual({id:'monthly-income:moey-s',name:'Receita mensal · Moey! B',kind:'income',accountId:'moey-s',categoryId:'',plan:13000});
+    expect(after.revision).toBe(before.revision+1);
+    migrate(p);
+    expect(repository.read(P)).toEqual(after);
+  });
+  it('base nova começa com um mês vazio e só inclui catálogo se fornecido explicitamente',()=>{
+    const p=path();const info=migrate(p);expect(info.version).toBe(4);const r=new Repository(p),before=r.read();
+    expect(before.state.accounts).toEqual([]);expect(before.state.categories).toEqual([]);
     expect(before.state.base).toEqual([]);expect(before.state.reserves).toEqual([]);expect(before.state.recurring).toEqual([]);
     expect(Object.values(before.state.months).every(m=>!m.events.length&&!m.lines.length&&!m.snapshot&&Object.values(m.initials).every(v=>v===null))).toBe(true);
     migrate(p);expect(r.read()).toEqual(before);
+    const configured=path();writeTestCatalog(dirname(configured));migrate(configured);
+    const {state}=new Repository(configured).read();
+    expect(state.accounts).toEqual(examples().accounts);expect(state.categories).toEqual(examples().categories);
+    expect(Object.values(state.months[state.selected].initials).every(value=>value===null)).toBe(true);
   });
   it('migra versão 1 preservando registos; versão futura falha sem reset',()=>{
     const p=path();migrate(p,migrations.slice(0,1));const db=connect(p);db.prepare('INSERT INTO receipts VALUES(?,?,?)').run('test','retained','{}');db.close();
@@ -172,7 +216,7 @@ describe('Migrações e isolamento físico',()=>{
     expect(()=>migrate(p)).toThrow('Incompatible');const again=new DatabaseSync(p);expect(again.prepare('SELECT canonical FROM receipts').get()?.canonical).toBe('{}');again.close();
   });
   it('falha de migração reverte versão e DDL, preservando dados',()=>{
-    const p=path();migrate(p,migrations.slice(0,1));expect(()=>migrate(p,[...migrations,'CREATE TABLE partial(id INTEGER); INVALID SQL;'])).toThrow();
+    const p=path();writeTestCatalog(dirname(p));migrate(p,migrations.slice(0,1));expect(()=>migrate(p,[...migrations,'CREATE TABLE partial(id INTEGER); INVALID SQL;'])).toThrow();
     const db=connect(p);expect(db.prepare('PRAGMA user_version').get()?.user_version).toBe(1);expect(db.prepare("SELECT name FROM sqlite_schema WHERE name='partial'").get()).toBeUndefined();expect(db.prepare('SELECT count(*) AS n FROM accounts').get()?.n).toBe(6);db.close();
   });
   it('ficheiro inválido e SQLite alheio não são substituídos',()=>{
@@ -223,14 +267,14 @@ describe('Comandos duráveis — expectativas independentes',()=>{
     unchanged(r,{type:'void',id:'corrected'},'dependentes');expect(new Repository(r.path).read(P).state.months[P].events.at(-1)?.allocations).toEqual({corrected:1000});
   });
   it('iniciais e operação são conjuntos; erro não grava inicial nem recibo; conhecido não substituído',()=>{
-    const r=fixture();act(r,{type:'month',period:'2026-12'});const action={...pay(10000,'save-em',M,{initials:{[M]:5000,[R]:0}}),date:'2026-12-02'};
-    const c=command(r,action,'joint','2026-12');const before=r.read('2026-12');expect(()=>r.command(c)).toThrow('disponíveis');expect(r.read('2026-12')).toEqual(before);
-    const good={...c,action:{...action,initials:{[M]:100000,[R]:0}}};r.command(good);expect(balance(r.read('2026-12').state.months['2026-12'],M)).toBe(90000);
+    const r=fixture();act(r,{type:'month',period:'2027-01'});const action={...pay(10000,'save-em',M,{initials:{[M]:5000,[R]:0}}),date:'2027-01-02'};
+    const c=command(r,action,'joint','2027-01');const before=r.read('2027-01');expect(()=>r.command(c)).toThrow('disponíveis');expect(r.read('2027-01')).toEqual(before);
+    const good={...c,action:{...action,initials:{[M]:100000,[R]:0}}};r.command(good);expect(balance(r.read('2027-01').state.months['2027-01'],M)).toBe(90000);
     unchanged(r,pay(1,'services',A,{initials:{[A]:99999}}),'já indicado');
   });
   it.each(['catalog','initials','events','receipt','commit'] as const)('falha em %s reverte todas as tabelas e recibo',stage=>{
-    const r=fixture();act(r,{type:'month',period:'2026-12'});const before=r.read('2026-12');const broken=new Repository(r.path,s=>{if(s===stage)throw new Error('injected');});
-    const a={...pay(10000,'save-em',M,{initials:{[M]:100000,[R]:0}}),date:'2026-12-02'};const c=command(r,a,'retry','2026-12');expect(()=>broken.command(c)).toThrow('injected');expect(r.read('2026-12')).toEqual(before);r.command(c);const m=r.read('2026-12').state.months['2026-12'];expect(balance(m,M)).toBe(90000);expect(balance(m,R)).toBe(10000);
+    const r=fixture();act(r,{type:'month',period:'2027-01'});const before=r.read('2027-01');const broken=new Repository(r.path,s=>{if(s===stage)throw new Error('injected');});
+    const a={...pay(10000,'save-em',M,{initials:{[M]:100000,[R]:0}}),date:'2027-01-02'};const c=command(r,a,'retry','2027-01');expect(()=>broken.command(c)).toThrow('injected');expect(r.read('2027-01')).toEqual(before);r.command(c);const m=r.read('2027-01').state.months['2027-01'];expect(balance(m,M)).toBe(90000);expect(balance(m,R)).toBe(10000);
   });
   it('resposta perdida depois do commit e reinício reconhece mesma tentativa mesmo com revisão antiga',()=>{
     const r=fixture();const c=command(r,pay(),'lost');const broken=new Repository(r.path,s=>{if(s==='response')throw new Error('lost response');});expect(()=>broken.command(c)).toThrow('lost response');
@@ -245,7 +289,7 @@ describe('Comandos duráveis — expectativas independentes',()=>{
   it('mesma chave concorrente tem só um efeito; mês/snapshot não duplicam nem substituem',async()=>{
     const r=fixture(),c=command(r,pay(),'same');const results=await Promise.all([Promise.resolve().then(()=>r.command(c)),Promise.resolve().then(()=>new Repository(r.path).command(c))]);expect(results[1].replay).toBe(true);
     const snap=command(r,{type:'snapshot',date:`${P}-03`},'snap');r.command(snap);expect(r.command(snap).replay).toBe(true);unchanged(r,{type:'snapshot',date:`${P}-04`});
-    act(r,{type:'month',period:'2026-12'},'open1');act(r,{type:'month',period:'2026-12'},'open2');const s=r.read('2026-12').state;expect(Object.keys(s.months)).toHaveLength(2);expect(s.months['2026-12'].events).toEqual([]);expect(Object.values(s.months['2026-12'].initials).every(x=>x===null)).toBe(true);
+    act(r,{type:'month',period:'2026-12'},'open1');act(r,{type:'month',period:'2026-12'},'open2');const s=r.read('2026-12').state;expect(Object.keys(s.months)).toHaveLength(2);expect(s.months['2026-12'].events).toEqual([]);expect(s.months['2026-12'].initials).toMatchObject({[A]:91000,[B]:25000,[R]:null});
     expect(()=>act(r,{type:'void',id:'same'},undefined,'2026-12')).toThrow('ativo');
   });
   it('base, recorrentes, ocorrências, linhas removidas e null sobrevivem',()=>{
@@ -253,12 +297,12 @@ describe('Comandos duráveis — expectativas independentes',()=>{
     expect(s.base[0].plan).toBeNull();expect(s.recurring[0].amount).toBeNull();expect(month(s).occurrences[0].state).toBe('open');expect(month(s).removedLines?.at(-1)?.name).toBe('Google One');expect(month(s).events).toEqual([]);
   });
   it('preparar reserva exige conta principal e não cria inicial ou compromisso',()=>{
-    const p=path();migrate(p);const r=new Repository(p),period=r.read().state.selected;act(r,{type:'reserve',reserve:{id:'chosen',name:'Finalidade escolhida',accountId:'moey-r'}},undefined,period);const s=r.read().state;expect(s.reserves).toHaveLength(1);expect(s.months[period].initials['r:chosen']).toBeNull();expect(s.months[period].lines).toEqual([]);
+    const p=path();writeTestCatalog(dirname(p));migrate(p);const r=new Repository(p),period=r.read().state.selected;act(r,{type:'reserve',reserve:{id:'chosen',name:'Finalidade escolhida',accountId:'moey-r'}},undefined,period);const s=r.read().state;expect(s.reserves).toHaveLength(1);expect(s.months[period].initials['r:chosen']).toBeNull();expect(s.months[period].lines).toEqual([]);
     expect(()=>act(r,{type:'reserve',reserve:{id:'chosen',name:'Outra',accountId:'act-r'}},undefined,period)).toThrow('não pode ser alterada');
   });
   it.each([pay(1.5),pay(Number.MAX_SAFE_INTEGER+1),pay(-1),pay(1,'food','a:invalid'),{...pay(),date:'2026-11-31'}] as Action[])('comando inválido não deixa efeitos: %j',a=>{unchanged(fixture(),a);});
   it('cêntimos no limite seguro sobrevivem SQLite↔JS sem arredondamento',()=>{
-    const r=fixture();act(r,{type:'month',period:'2026-12'});act(r,{type:'initial',source:A,amount:Number.MAX_SAFE_INTEGER},undefined,'2026-12');expect(new Repository(r.path).read('2026-12').state.months['2026-12'].initials[A]).toBe(9007199254740991);
+    const r=fixture();act(r,{type:'month',period:'2027-01'});act(r,{type:'initial',source:A,amount:Number.MAX_SAFE_INTEGER},undefined,'2027-01');expect(new Repository(r.path).read('2027-01').state.months['2027-01'].initials[A]).toBe(9007199254740991);
   });
   it.each(['income','services','save-em','transfer'] as const)('correct persistido conserva os dois vínculos e os efeitos de %s',kind=>{
     const r=fixture();

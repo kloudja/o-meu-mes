@@ -1,5 +1,7 @@
 # Fase 5 — Fiabilidade e entrega local
 
+**Registo histórico.** O endereço e os passos atuais de recuperação constam do [README](../README.md).
+
 Ensaio de 04/11/2026 em Windows, Node.js 24.22.1, SQLite 3.53.4, pnpm 11.25.0 e Microsoft Edge. Foram usadas bases fictícias novas em pastas temporárias `omeumes-test-*`. A base habitual ficou fora dos ensaios.
 
 ## Ensaio de recuperação

@@ -1,5 +1,4 @@
 import { writeAccess } from '@/server/access';
-import { basename } from 'node:path';
 import { createBackup } from '@/server/local-files.mjs';
 import { Repository } from '@/server/repository';
 
@@ -8,18 +7,16 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(request: Request) {
   const headers = { 'Cache-Control': 'no-store' };
-  const mode = writeAccess(request);
-  if (!mode) {
+  if (!writeAccess(request)) {
     return Response.json({ message: 'Faça este pedido nas Definições da aplicação local.' }, { status: 403, headers });
   }
   const action = new URL(request.url).searchParams.get('action');
   try {
     if (action === 'backup') {
       const backup = await createBackup();
-      return Response.json(mode === 'home' ? { ...backup, path: basename(backup.path) } : backup, { headers });
+      return Response.json(backup, { headers });
     }
     if (action === 'export') {
-      if (mode !== 'local') return Response.json({ message: 'A exportação JSON está disponível no PC.' }, { status: 403, headers });
       const { state, revision } = new Repository().read();
       const { accounts, categories, reserves, base, recurring, months } = state;
       const data = {

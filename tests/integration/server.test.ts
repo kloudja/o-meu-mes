@@ -6,7 +6,7 @@ import { join, resolve } from 'node:path';
 import { createServer } from 'node:net';
 import { migrate, connect } from '../../src/server/storage.mjs';
 import { Repository, persist, type Command } from '../../src/server/repository';
-import { examples } from '../../src/data/fixtures';
+import { examples } from '../fixtures';
 import { balance, realized, type Action } from '../../src/domain/engine';
 const P='2026-11',A='a:act-r',B='a:act-s';
 const pay=(amount:number):Action=>({type:'execute',lineId:'food',amount,source:A,date:`${P}-02`,complete:false});
@@ -42,7 +42,7 @@ it('dois processos concorrentes usam o mesmo bloqueio SQLite e não gastam saldo
     const retry=await post(two.url,{...c,requestId:'three',revision:repo.read(P).revision});expect(retry.status).toBe(422);expect(balance(repo.read(P).state.months[P],A)).toBe(2000);
     const snap={period:P,requestId:'snapshot-one',revision:repo.read(P).revision,action:{type:'snapshot',date:`${P}-03`} as Action};const snapshots=await Promise.all([post(one.url,snap),post(two.url,{...snap,requestId:'snapshot-two'})]);expect(snapshots.map(r=>r.status).sort()).toEqual([200,409]);expect(repo.read(P).state.months[P].snapshot?.date).toBe(`${P}-03`);
     const same={period:P,requestId:'new-same-key',revision:repo.read(P).revision,action:pay(500)};const sameResponses=await Promise.all([post(one.url,same),post(two.url,same)]);expect(sameResponses.every(r=>r.status===200)).toBe(true);const sameResults=await Promise.all(sameResponses.map(r=>r.json()));expect(sameResults.map(r=>r.replay).sort()).toEqual([false,true]);expect(balance(repo.read(P).state.months[P],A)).toBe(1500);expect(repo.read(P).state.months[P].events).toHaveLength(2);
-    const open={period:P,requestId:'new-month-one',revision:repo.read(P).revision,action:{type:'month',period:'2026-12'} as Action};const openings=await Promise.all([post(one.url,open),post(two.url,{...open,requestId:'new-month-two'})]);expect(openings.map(r=>r.status).sort()).toEqual([200,409]);const retryKey=openings[0].ok?'new-month-two':'new-month-one';expect((await post(two.url,{...open,requestId:retryKey,revision:repo.read(P).revision})).status).toBe(200);const december=repo.read('2026-12').state.months['2026-12'];expect(december.events).toEqual([]);expect(Object.values(december.initials).every(v=>v===null)).toBe(true);expect(Object.keys(repo.read().state.months)).toHaveLength(2);
+    const open={period:P,requestId:'new-month-one',revision:repo.read(P).revision,action:{type:'month',period:'2026-12'} as Action};const openings=await Promise.all([post(one.url,open),post(two.url,{...open,requestId:'new-month-two'})]);expect(openings.map(r=>r.status).sort()).toEqual([200,409]);const retryKey=openings[0].ok?'new-month-two':'new-month-one';expect((await post(two.url,{...open,requestId:retryKey,revision:repo.read(P).revision})).status).toBe(200);const december=repo.read('2026-12').state.months['2026-12'];expect(december.events).toEqual([]);expect(december.initials).toMatchObject({[A]:1500,'r:em':null});expect(Object.keys(repo.read().state.months)).toHaveLength(2);
     expect(december.occurrences.map(o=>o.id)).toEqual(['google:2026-12']);
     expect(december.lines.map(l=>l.id)).toEqual(examples().base.map(l=>l.id));
     const reminder:Command={period:'2026-12',requestId:'reminder-one',revision:repo.read().revision,action:{type:'occurrence',mode:'add',id:'google:2026-12'}};

@@ -1,4 +1,5 @@
-import { expect, test, type APIRequestContext, type Page } from '@playwright/test';
+import { expect, test } from './application';
+import type { APIRequestContext, Page } from '@playwright/test';
 import type { Action } from '../../src/domain/engine';
 import type { Confirmed } from '../../src/server/repository';
 import { goToScreen } from './navigation';
@@ -6,11 +7,11 @@ import { goToScreen } from './navigation';
 const period='2085-11',next='2085-12';
 const dialog=(page:Page)=>page.getByRole('dialog');
 const confirm=(page:Page)=>dialog(page).getByRole('button',{name:'Confirmar',exact:true});
-const capture=(page:Page,name:string)=>page.screenshot({path:`docs/capturas/fase-6-ajustes/${name}.png`,animations:'disabled'});
+const capture=(page:Page,name:string)=>page.screenshot({path:test.info().outputPath(`fase-6-ajustes/${name}.png`),animations:'disabled'});
 const read=async(request:APIRequestContext,month=period):Promise<Confirmed>=>(await request.get('/api/state?period='+month)).json();
 async function send(request:APIRequestContext,action:Action,month=period){
   const current=await read(request,month);
-  const response=await request.post('/api/state',{headers:{Origin:process.env.PLAYWRIGHT_BASE_URL!},
+  const response=await request.post('/api/state',{
     data:{period:current.state.selected,revision:current.revision,requestId:crypto.randomUUID(),action}});
   expect(response.ok(),await response.text()).toBe(true);
 }
@@ -77,7 +78,7 @@ test('objetivo, reforço extra, associação, transferência e sugestão após r
   await expect(savingAmount(page,'Falta poupar')).toContainText('45,00');
   await expect(saving(page).locator('.balance-value')).toContainText('160,00');
   const plan=page.getByRole('heading',{name:'Reforços planeados para este mês'}).locator('../..');
-  await expect(plan).toContainText(/Já poupado para o objetivo55,00/);
+  await expect(plan).toContainText(/Realizado55,00/);
   await page.setViewportSize({width:390,height:844});
   await saving(page).scrollIntoViewIfNeeded();
   await noOverflow(page);
@@ -95,7 +96,7 @@ test('objetivo, reforço extra, associação, transferência e sugestão após r
   await page.getByRole('button',{name:'Novo mês'}).click();
   await dialog(page).getByLabel('Mês',{exact:true}).fill(next);
   await dialog(page).getByRole('button',{name:'Abrir mês'}).click();
-  await expect(saving(page).locator('.balance-value')).toContainText('Por indicar');
+  await expect(saving(page).locator('.balance-value')).toContainText('160,00');
   const introduce=saving(page).getByRole('button',{name:'Introduzir Total Acumulado da Poupança'});
   await introduce.click();
   const total=dialog(page).getByLabel('Total que vê hoje no banco (€)');
@@ -120,13 +121,14 @@ test('criação e execução, filtro de poupanças e novo tipo com pagamentos em
   const month='2086-11';
   await send(request,{type:'month',period:month});
   await send(request,{type:'reserve',reserve:{id:'adjust-second',name:'Poupança de outro banco',accountId:'act-r'}},month);
+  await send(request,{type:'reserve',reserve:{id:'adjust-saving',name:'Poupança fictícia',accountId:'moey-r'}},month);
   await send(request,{type:'initial',source:'a:act-r',amount:50000},month);
   await send(request,{type:'initial',source:'a:moey-r',amount:20000},month);
   await page.goto('/');
   await page.locator('.app-shell[data-ready="true"]').waitFor();
   await page.getByLabel('Mês selecionado').selectOption(month);
   await goToScreen(page,'Plano e movimentos');
-  await page.getByRole('button',{name:'Registar nova despesa'}).click();
+  await page.getByRole('button',{name:'Adicionar despesa ao plano'}).click();
   await dialog(page).getByLabel('Nome',{exact:true}).fill('Despesa fictícia dos ajustes');
   const reserve=dialog(page).getByLabel('Poupança usada para pagar (opcional)');
   await reserve.selectOption('adjust-second');
@@ -136,7 +138,7 @@ test('criação e execução, filtro de poupanças e novo tipo com pagamentos em
   await expect(reserve.locator('option[value="adjust-saving"]')).toHaveCount(1);
   await dialog(page).getByLabel('Estado do registo').selectOption('done');
   await dialog(page).getByLabel('Tipo de despesa').selectOption('true');
-  await dialog(page).getByLabel('Plano atual (€) · opcional').fill('100');
+  await dialog(page).getByLabel('Orçamento total da despesa (€)').fill('100');
   await dialog(page).getByLabel('Montante da compra (€)').fill('20');
   await dialog(page).getByLabel('Nome da compra (opcional)').fill('Compra fictícia dos ajustes');
   await dialog(page).getByLabel('Data',{exact:true}).fill(month+'-04');
@@ -163,8 +165,8 @@ test('criação e execução, filtro de poupanças e novo tipo com pagamentos em
   await expect(expense).toContainText('Concluída');
   await expect(expense.getByRole('button',{name:'Pagar',exact:true})).toHaveCount(0);
   await expect(detail).toBeFocused();
-  await page.getByRole('tab',{name:'Recebimentos extra'}).click();
-  await page.getByRole('button',{name:'Adicionar novo recebimento extra'}).click();
+  await page.getByRole('tab',{name:'Receitas'}).click();
+  await page.getByRole('button',{name:'Adicionar receita ao plano'}).click();
   await dialog(page).getByLabel('Nome',{exact:true}).fill('Recebimento fictício dos ajustes');
   await dialog(page).getByLabel('Estado do registo').selectOption('done');
   await expect(dialog(page).getByRole('combobox',{name:'Categoria'})).toHaveCount(0);
@@ -185,12 +187,12 @@ test('criação e execução, filtro de poupanças e novo tipo com pagamentos em
   ]);
 });
 
-for(const width of [360,390,1366])test(`resumo em linha, navegação e temporizador de pagamento a ${width} px`,async({browser,baseURL})=>{
+for(const width of [360,390,1366])test(`resumo em linha, navegação e temporizador de pagamento a ${width} px`,async({browser,baseURL,openExamples})=>{
   const context=await browser.newContext({baseURL,viewport:{width,height:width<700?844:768},hasTouch:width<700,
     isMobile:width<700,locale:'pt-PT',reducedMotion:width===360?'reduce':'no-preference'});
   try{
     const page=await context.newPage();
-    await page.goto('/demo');
+    await openExamples(page);
     await page.locator('.app-shell[data-ready="true"]').waitFor();
     await expect(page.getByRole('heading',{name:'Mês',exact:true})).toBeVisible();
     const balance=page.getByRole('button',{name:/detalhe: Saldo atual das contas/});
@@ -207,9 +209,9 @@ for(const width of [360,390,1366])test(`resumo em linha, navegação e temporiza
     await expect(page.getByRole('heading',{name:'Plano e movimentos'})).toBeVisible();
     await expect(page.getByLabel('Mês selecionado')).toHaveValue('2026-11');
     if(width<700)await expect(page.locator('.mobile-screen-title')).toHaveText('Plano e movimentos');
-    const incomeTab=page.getByRole('tab',{name:'Recebimentos extra'});
+    const incomeTab=page.getByRole('tab',{name:'Receitas'});
     if(width<700)await incomeTab.tap();else await incomeTab.click();
-    await expect(page.getByRole('button',{name:'Adicionar novo recebimento extra',exact:true})).toBeInViewport();
+    await expect(page.getByRole('button',{name:'Adicionar receita ao plano',exact:true})).toBeInViewport();
     await noOverflow(page);
     if(width===390)await capture(page,'plano-390');
     await page.getByRole('tab',{name:'Despesas'}).click();

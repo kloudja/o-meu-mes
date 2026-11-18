@@ -1,6 +1,7 @@
 import { completed, linkableExpenses, occurrenceLineId, realized } from '@/domain/engine';
 import { dateLabel, money, monthLabel } from '@/domain/money';
 import type { Month, Occurrence, State } from '@/domain/model';
+import { compareNames } from '@/domain/text';
 
 export function RecurringPayments({state,month,disabled,onEdit,onLink,onResolve,onView}:{
   state:State;month:Month;disabled:boolean;onEdit:(id?:string)=>void;onLink:(id:string)=>void;
@@ -14,7 +15,7 @@ export function RecurringPayments({state,month,disabled,onEdit,onLink,onResolve,
   function funding(item:{accountId:string;reserveId?:string}){
     const account=state.accounts.find(a=>a.id===item.accountId);
     const reserve=state.reserves.find(r=>r.id===item.reserveId);
-    return <span>{account?.name??'Conta por indicar'}{reserve&&<> · Reserva {reserve.name}</>}</span>;
+    return <span>{account?.name??'Conta por indicar'}{reserve&&<> · Poupança {reserve.name}</>}</span>;
   }
   function reminder(o:Occurrence){
     const line=month.lines.find(l=>l.id===o.lineId);
@@ -53,7 +54,7 @@ export function RecurringPayments({state,month,disabled,onEdit,onLink,onResolve,
       </div>
       <p className="panel-intro">As despesas recorrentes aparecem nos meses que abrir a partir daqui. Pode também escrever um lembrete para aparecer no painel antes do pagamento.</p>
       {state.recurring.length===0&&<div className="empty"><h3>Ainda sem pagamentos recorrentes</h3><p>Crie uma definição mensal ou anual para receber lembretes nos meses novos.</p></div>}
-      {state.recurring.map(r=><article className="definition-row" key={r.id}>
+      {[...state.recurring].sort((a,b)=>compareNames(a.name,b.name)).map(r=><article className="definition-row" key={r.id}>
         <div className="recurring-info"><h3>{r.name}</h3>
           <p className="recurring-meta"><span>{r.frequency==='monthly'?'Mensal':'Anual'} · {dateLabel(r.date)}</span><strong>{money(r.amount)}</strong></p>
           <p>{funding(r)}</p><span className="status">{r.active?'Ativo':'Inativo'}</span>

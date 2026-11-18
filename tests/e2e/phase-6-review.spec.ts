@@ -1,22 +1,22 @@
-import { expect, test, type APIRequestContext, type Locator, type Page } from '@playwright/test';
+import { expect, test } from './application';
+import type { APIRequestContext, Locator, Page } from '@playwright/test';
 import { goToScreen } from './navigation';
 import type { Action } from '../../src/domain/engine';
 import type { Confirmed } from '../../src/server/repository';
 import type { Month } from '../../src/domain/model';
 
-test.skip(process.env.OMEUMES_E2E_ISOLATED!=='1','Requer a base fictícia do executor Playwright.');
 const dialog=(page:Page)=>page.getByRole('dialog');
 const confirm=(page:Page)=>dialog(page).getByRole('button',{name:'Confirmar',exact:true});
 const amount=(page:Page)=>dialog(page).getByLabel('Montante (€)',{exact:true});
 const account=(page:Page,name:string)=>page.locator('.account-card').filter({has:page.getByText(name,{exact:true})});
 const launch=(page:Page)=>page.getByRole('button',{name:'Quanto transferir para cada conta'});
 const batch=(page:Page)=>dialog(page).getByRole('button',{name:/Registar \d+ transferências? já efetuadas?/});
-const capture=(page:Page,name:string)=>page.screenshot({path:`docs/capturas/fase-6-revisao/${name}.png`});
+const capture=(page:Page,name:string)=>page.screenshot({path:test.info().outputPath(`fase-6-revisao/${name}.png`)});
 const snapshot=async(api:APIRequestContext,period:string):Promise<Confirmed>=>(await api.get('/api/state?period='+period)).json();
 const balanceOf=(month:Month,source:string)=>(month.initials[source]??0)+month.events.filter(e=>!e.voided).reduce((n,e)=>n+(e.deltas[source]??0),0);
 
 async function post(api:APIRequestContext,period:string,revision:number,action:Action,requestId=crypto.randomUUID()){
-  return api.post('/api/state',{headers:{Origin:process.env.PLAYWRIGHT_BASE_URL!},data:{period,revision,requestId,action}});
+  return api.post('/api/state',{data:{period,revision,requestId,action}});
 }
 async function seed(api:APIRequestContext,period:string,actions:Action[]){
   const initial=await snapshot(api,period);
@@ -210,13 +210,13 @@ test('reserva homónima selecionada no cartão mantém o ID e a falta fica visí
     expense('review-health','ADSE',4000,'moey-r',{reserveId:'review-empty'})
   ]);
   await openPeriod(page,period);
-  const warning=page.getByRole('region',{name:'Disponibilidade nas reservas'});
+  const warning=page.getByRole('region',{name:'Disponibilidade nas poupanças'});
   await expect(warning).toContainText('Faltam 40,00');
-  await warning.getByRole('button',{name:'Ver reserva'}).click();
+  await warning.getByRole('button',{name:'Ver Poupanças'}).click();
   await expect(page.locator('#reserve-review-empty')).toBeFocused();
   const first=page.locator('#reserve-review-first'),second=page.locator('#reserve-review-second');
   await second.getByRole('button',{name:'Poupar',exact:true}).click();
-  await expect(dialog(page)).toContainText(/Reserva 2 de 2.*Moey! A/);
+  await expect(dialog(page)).toContainText(/Poupança 2 de 2.*Moey! A/);
   const source=dialog(page).getByRole('combobox',{name:'De que banco sai o dinheiro?'});
   await amount(page).fill('10');
   await source.fill('Moey!');
@@ -238,8 +238,8 @@ test('reserva homónima selecionada no cartão mantém o ID e a falta fica visí
   expect(['r:review-first','r:review-second','a:moey-r'].map(id=>balanceOf(month,id))).toEqual([30000,11000,49000]);
 });
 
-test('Seguro do Carro requer associação explícita e a pesquisa reage ao renomear',async({page})=>{
-  await page.goto('/demo');
+test('Seguro do Carro requer associação explícita e a pesquisa reage ao renomear',async({page,openExamples})=>{
+  await openExamples(page);
   await expect(page.locator('.app-shell')).toHaveAttribute('data-ready','true');
   await goToScreen(page,'Pagamentos recorrentes');
   const car=page.getByTestId('occ-car-annual');
@@ -282,7 +282,7 @@ test('resumo com números extensos, reflow, contraste, toque e ajuda por teclado
     await expect(metrics).toContainText('1.234.567.890.123,45');
     await expect(metrics).toContainText('-1.111.111.011.111,11');
     await expect(metrics).toContainText('0,00');
-    await expect(metrics).toContainText('Subtotal · 1 de 6 contas');
+    await expect(metrics).toContainText('Ainda há valores por apurar · 1 de 6 contas');
     for(const width of [320,360,390,701,768,820,1024,1366,683,341]){
       await page.setViewportSize({width,height:900});
       await page.evaluate(()=>window.scrollTo(0,0));
@@ -301,7 +301,7 @@ test('resumo com números extensos, reflow, contraste, toque e ajuda por teclado
             const header=document.querySelector('.topbar')!.getBoundingClientRect(),rect=el.getBoundingClientRect();
             return rect.top>=header.top&&rect.bottom<=header.bottom&&rect.right<=header.right;
           }),
-          columns:cards.filter(card=>card.offsetTop===cards[0].offsetTop).length,
+          columns:cards.filter(card=>card.getBoundingClientRect().top===cards[0].getBoundingClientRect().top).length,
           amounts:cards.map(card=>{
             const value=card.querySelector('strong')!,range=document.createRange();
             range.selectNodeContents(value);

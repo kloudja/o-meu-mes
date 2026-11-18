@@ -35,10 +35,10 @@ it('despesas sem conta deixam total por apurar, sem serem atribuídas a outra co
 it('arquivo não oculta compromissos antigos e origem restrita não financia outras contas',()=>{
   const s=setup();s.accounts[0].archived=true;s.accounts[1].restricted=true;const r=report(s);expect(r.accounts).toHaveLength(1);expect(r.accounts[0].transfer).toBe(10000);
 });
-it('mês novo não usa saldo do mês anterior; centimos são exatos e o cálculo nunca sugere valor negativo',()=>{
+it('mês novo usa o saldo da conta do mês anterior; cêntimos são exatos e a falta nunca é negativa',()=>{
   const s=setup();s.months[s.selected].lines[0].plan=5001;s.months[s.selected].initials['a:a']=10000;expect(report(s).accounts[0].transfer).toBe(1);
   s.months[s.selected].initials['a:a']=20000;expect(report(s).accounts[0].transfer).toBe(0);
-  s.selected='2026-12';s.months[s.selected]=newMonth(s,s.selected);expect(report(s).accounts[0].transfer).toBeNull();expect(report(s).total).toBeNull();
+  s.selected='2026-12';s.months[s.selected]=newMonth(s,s.selected);expect(report(s).accounts[0]).toMatchObject({current:20000,transfer:0});expect(report(s).total).toBe(0);
 });
 
 it('sugere origem, destino e montante usando só o excedente depois dos compromissos da origem',()=>{
@@ -53,15 +53,15 @@ it('reparte várias origens e destinos sem reutilizar o mesmo excedente e mostra
   s.accounts.push({id:'c',name:'Conta C',color:'#123456',restricted:false},{id:'d',name:'Conta D',color:'#123456',restricted:false});
   m.initials['a:b']=12000;m.initials['a:c']=3000;m.initials['a:d']=0;
   m.lines.push({id:'d-expense',name:'Despesa D',kind:'expense',plan:8000,accountId:'d',categoryId:''});
-  const r=report(s);expect(r.suggestions.map(x=>[x.source.id,x.destination.id,x.amount])).toEqual([['b','a',10000],['b','d',2000],['c','d',3000]]);expect(r.suggested).toBe(15000);expect(r.uncovered).toBe(3000);
+  const r=report(s);expect(r.suggestions.map(x=>[x.source.id,x.destination.id,x.amount])).toEqual([['b','a',10000],['c','d',3000],['b','d',2000]]);expect(r.suggested).toBe(15000);expect(r.uncovered).toBe(3000);
   const action={type:'recordSuggestedTransfers',period:s.selected,date:'2026-11-03',routes:[
-    {source:'a:b',destination:'a:a',amount:10000},{source:'a:b',destination:'a:d',amount:2000},{source:'a:c',destination:'a:d',amount:3000}
+    {source:'a:b',destination:'a:a',amount:10000},{source:'a:c',destination:'a:d',amount:3000},{source:'a:b',destination:'a:d',amount:2000}
   ]} as const satisfies import('../../src/domain/engine').Action;
   expect(()=>transact(s,{...action,routes:action.routes.slice(0,2)},'partial')).toThrow('sugeridas mudaram');
   expect(()=>transact(s,{...action,period:'2026-12'},'wrong-month')).toThrow('sugeridas mudaram');
   const next=transact(s,action,'batch');
   expect(next.months[next.selected].events.map(event=>event.deltas)).toEqual([
-    {'a:b':-10000,'a:a':10000},{'a:b':-2000,'a:d':2000},{'a:c':-3000,'a:d':3000}
+    {'a:b':-10000,'a:a':10000},{'a:c':-3000,'a:d':3000},{'a:b':-2000,'a:d':2000}
   ]);
   expect(transact(next,action,'batch')).toBe(next);
   expect(m.events).toEqual([]);
@@ -78,9 +78,52 @@ it('dá prioridade à conta planeada quando a compra noutra conta cria uma falta
   expect(balance(month,'a:a')).toBe(7000);
   expect(balance(month,'a:c')).toBe(20000);
   expect(realized(month,'food')).toBe(3000);
-  expect(report(next).suggestions.map(x=>[x.source.id,x.destination.id,x.amount])).toEqual([['c','a',3000],['b','a',10000]]);
+  expect(report(next).reimbursements[0].suggested).toBe(3000);
+  expect(report(next).suggestions.map(x=>[x.source.id,x.destination.id,x.amount])).toEqual([['c','a',13000]]);
   const undo=transact(next,{type:'void',id:'purchase'},'undo');
   expect(report(undo).suggestions.map(x=>[x.source.id,x.destination.id,x.amount])).toEqual([['b','a',10000]]);
+});
+it('cobre a falta numa só transferência quando há uma conta com excedente suficiente',()=>{
+  const s=setup(),m=s.months[s.selected];
+  s.accounts.push({id:'c',name:'Conta C',color:'#123456',restricted:false});
+  m.initials['a:b']=10;
+  m.initials['a:c']=20000;
+  const result=report(s);
+  expect(result.suggestions.map(({source,destination,amount})=>[source.id,destination.id,amount])).toEqual([['c','a',10000]]);
+  expect(result.uncovered).toBe(0);
+});
+it('sugere repor uma compra mesmo sem falta na conta usada e protege os compromissos da conta prevista',()=>{
+  const s=setup(),m=s.months[s.selected];
+  m.initials['a:a']=19000;
+  m.lines[0].variable=true;
+  const purchase=transact(s,{type:'execute',lineId:'expense',amount:3000,source:'a:b',complete:false,date:'2026-11-04'},'purchase');
+  expect(report(purchase).total).toBe(0);
+  expect(report(purchase).reimbursements).toMatchObject([{source:{id:'a'},destination:{id:'b'},amount:3000,suggested:2000}]);
+  expect(report(purchase).suggested).toBe(2000);
+  const next=transact(purchase,{type:'recordSuggestedTransfers',period:s.selected,date:'2026-11-05',
+    routes:[{source:'a:a',destination:'a:b',amount:2000}]},'batch');
+  expect(report(next).reimbursements).toMatchObject([{amount:1000,suggested:0}]);
+  expect(report(next).suggestions).toEqual([]);
+  expect(balance(next.months[s.selected],'a:a')).toBe(17000);
+});
+
+it('compensa pagamentos em direções opostas e reapura o acerto após anular a transferência',()=>{
+  const s=setup(),m=s.months[s.selected];
+  m.initials['a:a']=50000;
+  m.lines.push({id:'food',name:'Comida',kind:'expense',plan:10000,accountId:'b',categoryId:'',variable:true});
+  const first=transact(s,{type:'execute',lineId:'expense',amount:3000,source:'a:b',complete:false,date:'2026-11-04'},'one');
+  const second=transact(first,{type:'execute',lineId:'food',amount:2000,source:'a:a',complete:false,date:'2026-11-04'},'two');
+  expect(report(second).reimbursements).toMatchObject([{source:{id:'a'},destination:{id:'b'},amount:1000,suggested:1000}]);
+  const paid=transact(second,{type:'transfer',source:'a:a',destination:'a:b',amount:1000,date:'2026-11-05'},'paid');
+  expect(report(paid).reimbursements).toEqual([]);
+  expect(report(transact(paid,{type:'void',id:'paid'},'undo')).suggested).toBe(1000);
+
+  // A transfer may also cover other commitments without recreating the offset.
+  const third=transact(second,{type:'line',line:{id:'extra',name:'Despesa prevista',kind:'expense',plan:44000,
+    accountId:'b',categoryId:''}},'extra');
+  expect(report(third).suggested).toBe(5000);
+  const combined=transact(third,{type:'transfer',source:'a:a',destination:'a:b',amount:5000,date:'2026-11-05'},'combined');
+  expect(report(combined).reimbursements).toEqual([]);
 });
 it('origem desconhecida, arquivada ou restrita não financia sugestões; reservas e receitas futuras não são usadas',()=>{
   const s=setup(),m=s.months[s.selected];m.initials['a:b']=null;expect(report(s).suggestions).toEqual([]);

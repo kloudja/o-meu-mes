@@ -13,6 +13,11 @@ export function sum(values:readonly number[]):number {
   return Number(total);
 }
 export function knownSum(values:readonly (number|null)[]):number|null {return values.some(v=>v===null)?null:sum(values as number[]);}
+export function subtotal(values:readonly (number|null)[]){
+  const known=values.filter(value=>value!==null);
+  const missing=values.length-known.length;
+  return {amount:known.length||!missing?sum(known):null,missing};
+}
 export function validPeriod(p:string){if(!/^(?!0000)\d{4}-(0[1-9]|1[0-2])$/.test(p))fail('PERIOD','Escolha um mês válido.');}
 export function daysInMonth(year:number,month:number){return [31,year%4===0&&(year%100!==0||year%400===0)?29:28,31,30,31,30,31,31,30,31,30,31][month-1];}
 export function validDate(d:string,period?:string){

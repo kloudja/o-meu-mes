@@ -1,11 +1,14 @@
 import { App } from '@/components/App';
+import { featureFlags } from '@/config/feature-flags';
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
-import { accessMode } from '@/server/access';
+import { localAccess } from '@/server/access';
 export const dynamic = 'force-dynamic';
-export function generateMetadata() { return { title: process.env.OMEUMES_TRIAL === '1' ? 'O meu mês · Ensaio fictício' : process.env.OMEUMES_RECOVERY_SCOPE ? 'O meu mês · Cópia recuperada' : 'O meu mês · Dados locais' }; }
+export function generateMetadata() {
+  if(process.env.OMEUMES_RECOVERY_SCOPE)return {title:'O meu mês · Cópia recuperada'};
+  return {title:featureFlags.localData?'O meu mês · Dados locais':'O meu mês'};
+}
 export default async function Page() {
-  const mode = accessMode(await headers());
-  if (!mode) notFound();
-  return <App home={mode === 'home'} recoveryScope={process.env.OMEUMES_RECOVERY_SCOPE} trial={process.env.OMEUMES_TRIAL === '1'} />;
+  if (!localAccess(await headers())) notFound();
+  return <App recoveryScope={process.env.OMEUMES_RECOVERY_SCOPE} showLocalData={featureFlags.localData}/>;
 }

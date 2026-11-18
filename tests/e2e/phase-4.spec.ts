@@ -1,5 +1,6 @@
 import { goToScreen } from './navigation';
-import { expect, test, type Page, type APIRequestContext } from '@playwright/test';
+import { expect, test } from './application';
+import type { Page, APIRequestContext } from '@playwright/test';
 import type { Action } from '../../src/domain/engine';
 import type { State } from '../../src/domain/model';
 
@@ -8,7 +9,7 @@ const nav=(page:Page,name:string)=>page.getByRole('navigation').getByRole('butto
 const newMonth=(page:Page)=>page.getByRole('button',{name:'Novo mês',exact:true});
 const confirm=(page:Page)=>dialog(page).getByRole('button',{name:'Confirmar',exact:true});
 const longName='Manutenção anual e assistência técnica da habitação de exemplo';
-const picture=(page:Page,name:string,width:number)=>page.screenshot({path:`docs/capturas/fase-4/${name}-${width}.png`,animations:'disabled'});
+const picture=(page:Page,name:string,width:number)=>page.screenshot({path:test.info().outputPath(`fase-4/${name}-${width}.png`),animations:'disabled'});
 const fits=async(page:Page)=>{
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
   if(await dialog(page).count())expect(await dialog(page).evaluate(d=>d.scrollWidth<=d.clientWidth+1)).toBe(true);
@@ -25,10 +26,10 @@ async function openMonth(page:Page,period:string,double=false){
 for(const width of [1366,360,390])test.describe(`percursos renderizados a ${width} px`,()=>{
   const height=width===1366?768:width===360?800:844;
   test.use({viewport:{width,height},hasTouch:width!==1366,isMobile:width!==1366,locale:'pt-PT'});
-  test('modelo, abertura, três ações, sobras e transferência',async({page})=>{
+  test('modelo, abertura, três ações, sobras e transferência',async({page,openExamples})=>{
     const errors:string[]=[];
     page.on('pageerror',error=>errors.push(error.message));
-    await page.goto('/demo');
+    await openExamples(page);
     await expect(page.locator('.app-shell')).toHaveAttribute('data-ready','true');
     if(width!==1366)await page.getByRole('button',{name:'Menu',exact:true}).click();
     for(const label of ['Mês','Plano e movimentos','Contas','Poupanças','Pagamentos recorrentes','Modelo Base','Definições']){
@@ -50,7 +51,7 @@ for(const width of [1366,360,390])test.describe(`percursos renderizados a ${widt
     const budget=page.locator('.budget-remainders');
     await expect(budget.getByRole('heading')).toBeInViewport();
     await expect(budget.locator('.budget-remaining')).toContainText(width===390?'45,00':'330,00');
-    await expect(page.locator('.metric.featured')).toContainText('Subtotal · 5 de 6 contas');
+    await expect(page.locator('.metric.featured')).toContainText('Ainda há valores por apurar · 5 de 6 contas');
     await expect(budget.locator('.budget-breakdown')).toContainText('Outras Despesas');
     await fits(page);
     if(width===390){await budget.getByRole('heading').scrollIntoViewIfNeeded();await picture(page,'sobras',width);}
@@ -151,12 +152,12 @@ async function read(api:APIRequestContext,period?:string){
 }
 async function send(api:APIRequestContext,action:Action){
   const before=await read(api);
-  const response=await api.post('/api/state',{headers:{Origin:process.env.PLAYWRIGHT_BASE_URL!},data:{period:before.state.selected,revision:before.revision,requestId:crypto.randomUUID(),action}});
+  const response=await api.post('/api/state',{data:{period:before.state.selected,revision:before.revision,requestId:crypto.randomUUID(),action}});
   expect(response.ok(),await response.text()).toBe(true);
 }
 
 test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({page,request})=>{
-  test.skip(process.env.OMEUMES_E2E_ISOLATED!=='1','Usar apenas a base criada pelo executor de testes.');
+
   const period='9995-02';
   const base={id:'phase4-base',name:'Seguro de teste',kind:'expense' as const,accountId:'act-r',categoryId:'cat-seguros',plan:8500};
   await send(request,{type:'line',target:'base',line:base});

@@ -1,5 +1,7 @@
 # Resultados da fase 3 — O meu mês
 
+**Registo histórico.** O arranque em vigor está no [README](../README.md). A rota de demonstração descrita nesta entrega foi retirada.
+
 Concluída em **03/11/2026**. **Persistência local integrada; continua a ser um protótipo, sem entrega para finanças do dia a dia.** Paragem exclusivamente no fim da fase 3. Fases 4 e 5 não foram iniciadas.
 
 ## Resultado

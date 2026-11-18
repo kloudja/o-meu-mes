@@ -7,7 +7,7 @@ const dateFormat = new Intl.DateTimeFormat('pt-PT', {
   dateStyle: 'short', timeStyle: 'short', timeZone: 'Europe/Lisbon',
 });
 
-export function LocalFiles({ home = false }: { home?: boolean }) {
+export function LocalFiles() {
   const running = useRef<Operation | null>(null);
   const [busy, setBusy] = useState<Operation | null>(null);
   const [backup, setBackup] = useState<{ path: string; createdAt: string }>();
@@ -62,7 +62,7 @@ export function LocalFiles({ home = false }: { home?: boolean }) {
 
   return <section className="panel local-files" aria-labelledby="local-files-title">
     <h2 id="local-files-title">Dados locais</h2>
-    <p>Os registos ficam em SQLite {home ? 'no PC de casa.' : 'neste computador.'}</p>
+    <p>Os registos ficam em SQLite neste computador.</p>
     <div className="local-file-actions">
       <div className="local-file-action">
         <h3>Cópia de segurança</h3>
@@ -73,31 +73,31 @@ export function LocalFiles({ home = false }: { home?: boolean }) {
           {backup && busy !== 'backup' && <>
             <p><strong>{error?.action === 'backup' ? 'Último backup confirmado' : 'Backup verificado'}</strong> · <time dateTime={backup.createdAt}>{dateFormat.format(new Date(backup.createdAt))}</time></p>
             <code>{backup.path}</code>
-            <p>{home ? 'O ficheiro fica na pasta backups do PC.' : 'Cole o caminho no Explorador de Ficheiros ou no assistente de restauro.'}</p>
+            <p>Cole o caminho no Explorador de Ficheiros ou no assistente de restauro.</p>
           </>}
         </div>
-        {!home && backup && busy !== 'backup' && <button className="text-button" onClick={() => void copyPath(backup.path)}>Copiar caminho</button>}
+        {backup && busy !== 'backup' && <button className="text-button" onClick={() => void copyPath(backup.path)}>Copiar caminho</button>}
         <p className="local-file-feedback" role="status">{copyMessage}</p>
         {error?.action === 'backup' && <p role="alert" className="form-error">{error.message}</p>}
       </div>
-      {home ? <p>A exportação JSON e o restauro estão disponíveis no PC.</p> : <div className="local-file-action">
+      <div className="local-file-action">
         <h3>Ficheiro para consulta</h3>
-        <p>Descarrega um JSON (versão 1) com todos os meses, planos, movimentos, contas, reservas e lembretes. Para recuperar a aplicação, use um backup SQLite.</p>
+        <p>Descarrega um JSON (versão 1) com todos os meses, planos, movimentos, contas, poupanças e lembretes. Para recuperar a aplicação, use um backup SQLite.</p>
         <button className="button" aria-disabled={!!busy} onClick={() => void run('export')}>Exportar dados</button>
         <div className="local-file-feedback" role="status">
           {busy === 'export' && <p>A preparar a exportação…</p>}
           {exported && <p>Exportação preparada. Consulte as transferências do navegador para localizar <strong>o-meu-mes-exportacao.json</strong>.</p>}
         </div>
         {error?.action === 'export' && <p role="alert" className="form-error">{error.message}</p>}
-      </div>}
+      </div>
     </div>
-    {!home && <details className="restore-help">
+    <details className="restore-help">
       <summary>Restaurar para outro ficheiro</summary>
       <ol>
         <li>Na pasta do projeto, abra <strong>Restaurar.cmd</strong>.</li>
         <li>Cole o caminho do backup e escolha um nome novo para a cópia. Confira os dois caminhos antes de confirmar.</li>
-        <li>Abra a cópia verificada pelo assistente. Para regressar à base habitual, pare esse servidor e abra <strong>Iniciar.cmd</strong>.</li>
+        <li>Feche a instância habitual antes de abrir a cópia pelo assistente. Para regressar à base habitual, feche a cópia e abra <strong>Iniciar.cmd</strong>.</li>
       </ol>
-    </details>}
+    </details>
   </section>;
 }

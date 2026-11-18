@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { examples } from '../../src/data/fixtures';
+import { examples } from '../fixtures';
 import { activeEvents, balance, budgetRemainder, completed, dueDate, initialPlan, obligations, pending, realized, savingPending, sourceTotals, summary, totalUnallocated, transact, DomainError, type Action, type FinancialAction } from '../../src/domain/engine';
 import { aid, rid, type State } from '../../src/domain/model';
 import { monthLabel, parseMoney } from '../../src/domain/money';
@@ -157,10 +157,10 @@ describe('Referências, desconhecidos e isolamento',()=>{
     expect(budgetRemainder(month(s))).toBe(4000);expect(obligations(month(s),A)).toBe(0);expect(obligations(month(s),B)).toBe(0);expect(balance(month(s),R)).toBe(30000);
     s=act(s,{type:'line',line:{...month(s).lines[0],plan:10000}});expect(budgetRemainder(month(s))).toBe(-6000);
   });
-  it('mês novo não copia nada; base alterada e catálogos arquivados não mudam mês anterior',()=>{
+  it('mês novo recebe o saldo das contas; editar o modelo e arquivar contas preserva o mês anterior',()=>{
     let s=act(examples(),pay());s=act(s,{type:'snapshot',date:'2026-11-02'});const before=structuredClone(month(s));
     s=act(s,{type:'line',target:'base',line:{...s.base[0],plan:12345}});s=act(s,{type:'account',account:{...s.accounts[0],archived:true}});s=act(s,{type:'month',period:'2026-12'});
-    expect(month(s).lines[0].plan).toBe(12345);expect(month(s).snapshot).toBeUndefined();expect(month(s).events).toEqual([]);expect(Object.values(month(s).initials).every(v=>v===null)).toBe(true);expect(s.months['2026-11']).toEqual(before);
+    expect(month(s).lines[0].plan).toBe(12345);expect(month(s).snapshot).toBeUndefined();expect(month(s).events).toEqual([]);expect(month(s).initials).toMatchObject({[A]:91000,[B]:25000,[R]:null,'a:bank':null});expect(s.months['2026-11']).toEqual(before);
     s=act(s,{type:'month',period:'2026-11'});expect(month(s)).toEqual(before);
   });
   it('arquivo preserva referências existentes mas impede novas seleções; objeto de comando não fica ligado ao estado',()=>{
@@ -193,18 +193,18 @@ describe('Idempotência, confirmação conjunta e validação direta',()=>{
     let s=small();rejected(s,pay('food',11000),'FUNDS','retry');s=act(s,pay('food',4000),'retry');s=act(s,{type:'void',id:'retry'});s=act(s,pay('food',4000),'new');expect(balance(month(s),A)).toBe(6000);expect(activeEvents(month(s))).toHaveLength(1);
   });
   it('mesma chave em meses distintos não impede operações legítimas',()=>{
-    let s=act(examples(),pay(),'key');s=act(s,{type:'month',period:'2026-12'});s=act(s,pay('food',1000,A,{date:'2026-12-02',initials:{[A]:10000}}),'key');expect(realized(month(s),'food')).toBe(1000);expect(realized(s.months['2026-11'],'food')).toBe(4000);
+    let s=act(examples(),pay(),'key');s=act(s,{type:'month',period:'2026-12'});s=act(s,pay('food',1000,A,{date:'2026-12-02'}),'key');expect(realized(month(s),'food')).toBe(1000);expect(realized(s.months['2026-11'],'food')).toBe(4000);
   });
   it('iniciais + reforço: cancelar não envia comando; falhas deixam todos os campos intactos',()=>{
-    let s=act(examples(),{type:'month',period:'2026-12'});const before=structuredClone(s);
-    const draft=pay('save-em',10000,M,{date:'2026-12-02',initials:{[M]:100000,[R]:0}});expect(s).toEqual(before);
+    let s=act(examples(),{type:'month',period:'2027-01'});const before=structuredClone(s);
+    const draft=pay('save-em',10000,M,{date:'2027-01-02',initials:{[M]:100000,[R]:0}});expect(s).toEqual(before);
     rejected(s,{...draft,initials:{[M]:5000,[R]:0}},'FUNDS','joint');rejected(s,{...draft,source:'a:missing'},'SOURCE','joint');
     s=act(s,draft,'joint');expect(balance(month(s),M)).toBe(90000);expect(balance(month(s),R)).toBe(10000);
     rejected(s,{...draft,amount:1000},'INITIAL_EXISTS');
   });
   it('recebimento sem inicial mantém desconhecido e exige inicial explícito',()=>{
-    const s=act(examples(),{type:'month',period:'2026-12'});rejected(s,pay('income',10000,A,{date:'2026-12-02'}),'INITIAL');
-    const next=act(s,pay('income',10000,A,{date:'2026-12-02',initials:{[A]:0}}));expect(balance(month(next),A)).toBe(10000);expect(balance(month(s),A)).toBeNull();
+    const s=act(examples(),{type:'month',period:'2027-01'});rejected(s,pay('income',10000,A,{date:'2027-01-02'}),'INITIAL');
+    const next=act(s,pay('income',10000,A,{date:'2027-01-02',initials:{[A]:0}}));expect(balance(month(next),A)).toBe(10000);expect(balance(month(s),A)).toBeNull();
   });
   it.each([-1,0.1,NaN,Infinity,Number.MAX_SAFE_INTEGER+1])('rejeita montante inválido %s no domínio',n=>{rejected(examples(),pay('food',n));});
   it.each(['2026-11-00','2026-11-31','2026-12-01','2026-2-02','0000-11-02'])('rejeita data %s sem efeitos',date=>{rejected(examples(),pay('food',1000,A,{date}),'DATE');});

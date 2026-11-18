@@ -7,10 +7,11 @@ import { chromium, expect as browserExpect } from '@playwright/test';
 import { expect, it } from 'vitest';
 import { balance, realized, sourceTotals, summary, type Action } from '../../src/domain/engine';
 import type { Command, Confirmed } from '../../src/server/repository';
+import { writeTestCatalog } from '../fixtures';
 
-function windowsCommand(path: string, command: string, args: string[] = []) {
-  const child = spawn('cmd.exe', ['/d', '/c', command, ...args], {
-    env: { ...process.env, OMEUMES_TEST_MODE: '1', OMEUMES_DB_PATH: path },
+function windowsCommand(path: string, command: string, port?: number) {
+  const child = spawn('cmd.exe', ['/d', '/c', command], {
+    env: { ...process.env, OMEUMES_TEST_MODE: '1', OMEUMES_DB_PATH: path, OMEUMES_TEST_PORT: port?.toString() },
     stdio: 'pipe', windowsHide: true,
   });
   let log = '';
@@ -48,19 +49,28 @@ const get = async (url: string, period?: string): Promise<Confirmed> =>
 const post = (url: string, endpoint: string, body?: unknown, origin = url) =>
   fetch(url + endpoint, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
-it.skipIf(process.platform !== 'win32')('arranca com porta ocupada, recupera dois meses e abre a cópia no Edge', async () => {
+it.skipIf(process.platform !== 'win32')('recusa uma porta ocupada e usa o mesmo endereço para abrir a cópia recuperada', async () => {
   const root = mkdtempSync(join(tmpdir(), 'omeumes-test-recovery-'));
+  writeTestCatalog(root);
   const original = join(root, 'base de ensaio.sqlite');
   const restored = join(root, 'cópia recuperada.sqlite');
   const occupied = createServer((_req, res) => res.end('processo independente'));
   await new Promise<void>(resolve => occupied.listen(0, '127.0.0.1', resolve));
   const port = (occupied.address() as { port: number }).port;
-  const server = windowsCommand(original, 'Iniciar.cmd', ['--port', String(port)]);
+  const blocked = windowsCommand(original, 'Iniciar.cmd', port);
+  blocked.child.stdin.end();
+  try {
+    expect(await blocked.done).toBe(1);
+    expect(blocked.log()).toContain(`Porta ${port} ocupada`);
+    expect(await (await fetch(`http://127.0.0.1:${port}`)).text()).toBe('processo independente');
+  } finally {
+    await new Promise<void>(resolve => occupied.close(() => resolve()));
+  }
+  const server = windowsCommand(original, 'Iniciar.cmd', port);
   try {
     const url = await ready(server);
-    expect(url).not.toBe(`http://127.0.0.1:${port}`);
-    expect(server.log()).toContain(`Porta ${port} ocupada`);
-    expect(await (await fetch(`http://127.0.0.1:${port}`)).text()).toBe('processo independente');
+    expect(url).toBe(`http://127.0.0.1:${port}`);
+    expect((await fetch(url+'/demo')).status).toBe(404);
     const first = await get(url);
     const period = first.state.selected;
     const next = new Date(`${period}-01T00:00:00Z`);
@@ -136,7 +146,7 @@ it.skipIf(process.platform !== 'win32')('arranca com porta ocupada, recupera doi
     await server.stop();
     const originalBytes = readFileSync(original);
 
-    const recovery = windowsCommand(original, 'Restaurar.cmd');
+    const recovery = windowsCommand(original, 'Restaurar.cmd', port);
     recovery.child.stdin.end(`"${backup.path}"\n"${restored}"\ns\ns\n`, 'utf8');
     try {
       const recoveryUrl = await ready(recovery);
@@ -145,7 +155,7 @@ it.skipIf(process.platform !== 'win32')('arranca com porta ocupada, recupera doi
       expect(log).toContain(`Destino: ${restored}`);
       expect(log.indexOf('Destino:')).toBeLessThan(log.indexOf('A copiar e verificar'));
       expect(log).toContain('Restauro verificado');
-      expect(recoveryUrl).not.toBe(url);
+      expect(recoveryUrl).toBe(url);
       const recovered = await get(recoveryUrl, period);
       expect(recovered).toEqual(before);
       const m = recovered.state.months[period];
@@ -158,7 +168,7 @@ it.skipIf(process.platform !== 'win32')('arranca com porta ocupada, recupera doi
       expect(m.snapshot?.lines.find(line => line.id === expense.id)?.plan).toBe(8500);
       expect(m.lines.find(line => line.id === expense.id)?.plan).toBe(9000);
       expect(second.events).toEqual([]);
-      expect(Object.values(second.initials).every(amount => amount === null)).toBe(true);
+      expect(second.initials).toMatchObject({ [A]: 61000, [B]: 45000, [R]: null, 'a:bank': null });
       expect(second.occurrences.map(o => [o.state, o.amount])).toEqual([['linked', null], ['dismissed', 1234]]);
       const replay = await (await post(recoveryUrl, '/api/state', payment)).json();
       expect(replay).toEqual({ ...recovered, replay: true });
@@ -172,7 +182,7 @@ it.skipIf(process.platform !== 'win32')('arranca com porta ocupada, recupera doi
         const page = await browser.newPage({ viewport: { width: 1366, height: 768 }, locale: 'pt-PT' });
         await page.addInitScript(() => localStorage.setItem('omeumes.pending.v1:teste', '{}'));
         await page.goto(recoveryUrl);
-        await browserExpect(page.getByText('Cópia recuperada — SQLite')).toBeVisible();
+        await browserExpect(page.locator('.storage-banner')).toContainText('Cópia recuperada');
         await browserExpect(page.getByRole('button', { name: 'Repetir confirmação' })).toHaveCount(0);
         await page.getByLabel('Mês selecionado').selectOption(period);
         await browserExpect(page.getByLabel('Mês selecionado')).toHaveValue(period);
@@ -181,18 +191,17 @@ it.skipIf(process.platform !== 'win32')('arranca com porta ocupada, recupera doi
         await browserExpect(metric(/^Despesas por pagar/)).toContainText('75,00');
         await page.getByRole('navigation').getByRole('button',{name:'Plano e movimentos',exact:true}).click();
         await browserExpect(page.getByTestId('line-compra')).toContainText('40,00');
-        await page.screenshot({ path: 'docs/capturas/fase-5/copia-recuperada-1366.png', animations: 'disabled' });
+        await page.screenshot({ path: join(root, 'copia-recuperada-1366.png'), animations: 'disabled' });
       } finally { await browser.close(); }
     } finally { await recovery.stop(); }
     expect(readFileSync(backup.path)).toEqual(backupBytes);
     expect(readFileSync(original)).toEqual(originalBytes);
     expect(readdirSync(root).some(name => name.startsWith('.omeumes-incompleto-'))).toBe(false);
-    const reopened = windowsCommand(original, 'Iniciar.cmd', ['--port', String(port)]);
+    const reopened = windowsCommand(original, 'Iniciar.cmd', port);
     try { expect(await get(await ready(reopened), period)).toEqual(before); }
     finally { await reopened.stop(); }
   } finally {
     await server.stop();
-    await new Promise<void>(resolve => occupied.close(() => resolve()));
   }
 });
 
@@ -201,8 +210,12 @@ it.skipIf(process.platform !== 'win32')('Iniciar.cmd mostra como agir perante um
   const corrupt = join(root, 'danificada.sqlite');
   writeFileSync(corrupt, 'não é uma base de dados');
   const original = readFileSync(corrupt);
+  const probe = createServer();
+  await new Promise<void>(resolve => probe.listen(0, '127.0.0.1', resolve));
+  const port = (probe.address() as { port: number }).port;
+  await new Promise<void>(resolve => probe.close(() => resolve()));
   for (const path of [corrupt, join(corrupt, 'novo.sqlite')]) {
-    const command = windowsCommand(path, 'Iniciar.cmd');
+    const command = windowsCommand(path, 'Iniciar.cmd', port);
     command.child.stdin.end();
     expect(await command.done).toBe(1);
     expect(command.log()).toContain('Restaurar.cmd');

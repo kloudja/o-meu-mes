@@ -1,10 +1,48 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './application';
+
 import { goToScreen } from './navigation';
 
 for(const width of [1366,390]){
-  test(`sobras, atalhos e total do plano a ${width} px`,async({page},info)=>{
+  test(`o detalhe sobrepõe o conteúdo sem mover cartões a ${width} px`,async({page,openExamples},info)=>{
+    await page.setViewportSize({width,height:844});
+    await openExamples(page);
+    const metrics=page.getByRole('region',{name:'Resumo mensal'});
+    const geometry=()=>page.locator('.metric-slot .metric, .metric-heading, .metric-slot .metric>strong, .month-funding')
+      .evaluateAll(elements=>elements.map(element=>{
+        const {x,y,width,height}=element.getBoundingClientRect();
+        return {x:x+scrollX,y:y+scrollY,width,height};
+      }));
+    const before=await geometry();
+    const trigger=metrics.getByRole('button',{name:'Ver detalhe: Despesas por pagar',exact:true});
+    await trigger.press('Space');
+    const detail=metrics.getByRole('region',{name:'Detalhe: Despesas por pagar'});
+    await expect(detail).toBeVisible();
+    expect(await geometry()).toEqual(before);
+    const underlying=width===390?metrics.getByRole('heading',{name:'Poupanças',exact:true}):
+      page.getByRole('region',{name:'O que rever neste mês'});
+    expect(await underlying.evaluate((element,panelId)=>{
+      const rect=element.getBoundingClientRect(),panel=document.getElementById(panelId)!;
+      const overlay=panel.getBoundingClientRect();
+      const x=Math.max(rect.left,overlay.left)+4,y=Math.max(rect.top,overlay.top)+4;
+      return x<rect.right&&y<rect.bottom&&panel.contains(document.elementFromPoint(x,y));
+    },'metric-expenses')).toBe(true);
+    await page.screenshot({path:info.outputPath(`detalhe-sobreposto-${width}.png`)});
+    await page.keyboard.press('Tab');
+    await expect(detail).toBeFocused();
+    await page.keyboard.press('Escape');
+    await expect(detail).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    await trigger.click();
+    await page.getByRole('heading',{name:'Mês',exact:true}).click();
+    await expect(detail).toHaveCount(0);
+    expect(await geometry()).toEqual(before);
+  });
+}
+
+for(const width of [1366,390]){
+  test(`sobras, atalhos e total do plano a ${width} px`,async({page,openExamples},info)=>{
     await page.setViewportSize({width,height:width===390?844:900});
-    await page.goto('/demo');
+    await openExamples(page);
     await expect(page.locator('.app-shell')).toHaveAttribute('data-ready','true');
     const budgets=page.getByRole('region',{name:'Sobras dos orçamentos'});
     const balances=page.getByRole('region',{name:'Saldos atuais e previstos'});
@@ -57,8 +95,28 @@ for(const width of [1366,390]){
   });
 }
 
+test('o mês selecionado conserva o alinhamento ao passar o rato noutra opção',async({page,openExamples},info)=>{
+  await openExamples(page);
+  await page.getByRole('button',{name:'Novo mês'}).click();
+  await page.getByRole('button',{name:'Abrir mês'}).click();
+  const select=page.getByLabel('Mês selecionado');
+  await expect(select).toHaveValue('2026-12');
+  await select.selectOption('2026-11');
+  await expect(select).toHaveValue('2026-11');
+  await select.click();
+  const november=select.locator('option:checked');
+  const december=select.locator('option[value="2026-12"]');
+  const before=await november.boundingBox();
+  await december.hover();
+  expect(before?.width).toBeGreaterThan(0);
+  expect(await november.boundingBox()).toEqual(before);
+  await page.screenshot({path:info.outputPath('seletor-de-mes.png')});
+  await page.keyboard.press('Escape');
+  await expect(select).toHaveValue('2026-11');
+});
+
 test('eliminar uma conta em Contas pede confirmação e persiste após recarregar',async({page})=>{
-  test.skip(process.env.OMEUMES_E2E_ISOLATED!=='1','Executar com scripts/test-browser.mjs e uma base fictícia.');
+
   const name='Conta fictícia para eliminar';
   await page.goto('/');
   await expect(page.locator('.app-shell')).toHaveAttribute('data-ready','true');

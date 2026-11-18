@@ -1,6 +1,6 @@
 # UX — fase 1
 
-Nota de continuidade: a secção «Estado e limites» descreve a entrega original da fase 1. O produto atual tem os ambientes SQLite e demonstração descritos no README.
+Nota de continuidade: a secção «Estado e limites» descreve a entrega original da fase 1. O arranque atual está no [README](../README.md). As referências a demonstrações e ensaios neste documento descrevem entregas anteriores.
 
 ## Alternativas antes da implementação
 
@@ -66,7 +66,7 @@ Na inspeção móvel, Pagar media 35 px de altura. Pagar/Registar, detalhe, anul
 
 O teste Shift+Tab no primeiro controlo de um diálogo reproduziu perda de foco para o navegador. O diálogo agora percorre circularmente os controlos habilitados nas duas direções; Escape e retorno ao elemento de abertura mantêm-se. O aviso por conta passou a explicar a necessidade de transferência sem pressupor que a disponibilidade global seja positiva.
 
-Inspeção renderizada e regressão em desktop e a 360/390 px. Não constitui aceitação pelo utilizador: a experimentação acompanhada e a confirmação dos ajustes estão pendentes. Ver FASE_6_RESULTADOS.md.
+Nesta revisão foi feita a inspeção da interface e a regressão em desktop e a 360/390 px. A confirmação final do utilizador, em 11/11/2026, consta de `FASE_6_RESULTADOS.md`.
 
 
 ## Adaptação móvel doméstica — 05/11/2026
