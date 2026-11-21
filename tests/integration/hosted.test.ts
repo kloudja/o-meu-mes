@@ -3,6 +3,8 @@ import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from 'node
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { createServer } from 'node:http';
+import type { AddressInfo } from 'node:net';
 import { afterEach, expect, it, vi } from 'vitest';
 import { hostedSettings } from '../../src/server/hosted-config.mjs';
 import {
@@ -14,6 +16,7 @@ import { allowTransition } from '../../src/server/transition.mjs';
 import { connect, migrate } from '../../src/server/storage.mjs';
 import { lockDatabase } from '../../scripts/instance-lock.mjs';
 import { startBackgroundJobs } from '../../src/server/background-jobs.mjs';
+import { requestLoopback } from '../../scripts/hosted-http.mjs';
 import { createBackup, restoreBackup } from '../../src/server/local-files.mjs';
 import { reconcile } from '../../src/server/recovery-registry.mjs';
 import { createSpace } from '../../src/modules/spaces/schema.mjs';
@@ -55,6 +58,80 @@ afterEach(() => {
   for (const path of directories.splice(0)) {
     if (path.startsWith(join(realpathSync(tmpdir()), 'omeumes-test-hosted-')))
       rmSync(path, { recursive: true, force: true, maxRetries: 5 });
+  }
+});
+
+it('hosted HTTP connects to loopback with the public Host and preserves authenticated JSON requests', async () => {
+  const host = 'omeumes.example.invalid';
+  const server = createServer((request, response) => {
+    if (request.headers.host !== host) {
+      response.writeHead(403).end('Origem inválida.');
+      return;
+    }
+    let body = '';
+    request.setEncoding('utf8');
+    request.on('data', (chunk) => {
+      body += chunk;
+    });
+    request.on('end', () => {
+      response.end(
+        JSON.stringify({ method: request.method, path: request.url, headers: request.headers, body }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    expect((await requestLoopback(port, '/api/identity')).status).toBe(403);
+    const ready = await requestLoopback(port, '/api/identity', { headers: { host } });
+    expect(ready.status).toBe(200);
+    expect(JSON.parse(ready.body)).toMatchObject({ method: 'GET', path: '/api/identity', headers: { host } });
+    const payload = JSON.stringify({ name: 'CI sintética', amount: 1234 });
+    const saved = await requestLoopback(port, '/api/state?period=2028-11', {
+      method: 'POST',
+      headers: {
+        Host: host,
+        Origin: 'https://' + host,
+        Cookie: '__Host-omeumes=synthetic-cookie',
+        'X-Account': 'synthetic-account',
+        'Content-Type': 'application/json',
+      },
+      body: payload,
+    });
+    expect(saved.status).toBe(200);
+    expect(JSON.parse(saved.body)).toMatchObject({
+      method: 'POST',
+      path: '/api/state?period=2028-11',
+      headers: {
+        host,
+        origin: 'https://' + host,
+        cookie: '__Host-omeumes=synthetic-cookie',
+        'x-account': 'synthetic-account',
+        'content-type': 'application/json',
+      },
+      body: payload,
+    });
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+it('hosted HTTP fails on stalled or broken connections and preserves unavailable responses', async () => {
+  const server = createServer((request, response) => {
+    if (request.url === '/broken') request.socket.destroy();
+    else if (request.url === '/unavailable') response.writeHead(503).end('unavailable');
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+  const port = (server.address() as AddressInfo).port;
+  try {
+    expect(await requestLoopback(port, '/unavailable')).toEqual({ status: 503, body: 'unavailable' });
+    await expect(requestLoopback(port, '/broken')).rejects.toThrow();
+    await expect(requestLoopback(port, '/stalled', { timeout: 100 })).rejects.toMatchObject({
+      name: 'AbortError',
+    });
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
 

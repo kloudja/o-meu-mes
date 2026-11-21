@@ -6,6 +6,7 @@ import { chmodSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
+import { requestLoopback } from '../../scripts/hosted-http.mjs';
 
 assert.equal(process.platform, 'linux');
 const image = process.argv[2];
@@ -60,19 +61,24 @@ async function start() {
     image,
   ]);
   containers.push(id);
+  let lastCheck;
   for (let i = 0; i < 60; i++) {
-    const check = spawnSync('docker', ['exec', id, 'node', 'scripts/healthcheck.mjs']);
+    const check = spawnSync('docker', ['exec', id, 'node', 'scripts/healthcheck.mjs'], {
+      encoding: 'utf8',
+      timeout: 12_000,
+    });
     if (check.status === 0) {
       const port = docker(['port', id, '3000/tcp']).split(':').at(-1);
-      return { id, url: 'http://127.0.0.1:' + port };
+      return { id, port };
     }
+    lastCheck = check.error?.message || check.stderr || check.stdout || 'exit ' + check.status;
     await delay(1000);
   }
-  throw new Error('Image not ready: ' + docker(['logs', id]));
+  throw new Error('Image not ready: ' + lastCheck.trim() + '\n' + docker(['logs', id]));
 }
 let person;
 async function request(app, path, payload) {
-  const response = await fetch(app.url + path, {
+  const response = await requestLoopback(app.port, path, {
     method: payload ? 'POST' : 'GET',
     headers: {
       Host: 'omeumes.example.invalid',
@@ -81,10 +87,10 @@ async function request(app, path, payload) {
       ...(person ? { Cookie: '__Host-omeumes=' + person.cookie, 'X-Account': person.id } : {}),
     },
     body: payload ? JSON.stringify(payload) : undefined,
-    signal: AbortSignal.timeout(10_000),
+    timeout: 10_000,
   });
-  assert.equal(response.status, 200, await response.clone().text());
-  return response.json();
+  assert.equal(response.status, 200, response.body);
+  return JSON.parse(response.body);
 }
 try {
   assert.notEqual(

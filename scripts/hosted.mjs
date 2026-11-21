@@ -13,6 +13,7 @@ import { currentSchema } from '../src/server/transition.mjs';
 import { createBackup } from '../src/server/local-files.mjs';
 import { lockDatabase } from './instance-lock.mjs';
 import { startBackgroundJobs } from '../src/server/background-jobs.mjs';
+import { requestLoopback } from './hosted-http.mjs';
 
 const [action, ...args] = process.argv.slice(2);
 if (action === 'schema') {
@@ -55,18 +56,21 @@ try {
   );
   let stopping = false;
   const health = createServer(async (request, response) => {
+    let reason = 'supervisor unavailable';
     try {
       if (request.url !== '/ready' || stopping || child.exitCode !== null || !jobs.healthy())
         throw new Error();
+      reason = 'database check failed';
       checkHostedDatabase(path);
-      const page = await fetch('http://127.0.0.1:3000/api/identity', {
+      reason = 'identity request failed';
+      const page = await requestLoopback(3000, '/api/identity', {
         headers: { host: new URL(config.origin).host },
-        signal: AbortSignal.timeout(3000),
       });
-      if (!page.ok) throw new Error();
+      reason = 'identity HTTP ' + page.status;
+      if (page.status !== 200) throw new Error();
       response.writeHead(200, { 'Cache-Control': 'no-store' }).end('ready\n');
     } catch {
-      response.writeHead(503, { 'Cache-Control': 'no-store' }).end('unavailable\n');
+      response.writeHead(503, { 'Cache-Control': 'no-store' }).end('unavailable: ' + reason + '\n');
     }
   });
   health.listen(3001, '127.0.0.1');
