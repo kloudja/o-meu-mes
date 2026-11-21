@@ -2,7 +2,7 @@ import { expect, test } from './application';
 import { goToScreen } from './navigation';
 import type { State } from '../../src/modules/finance/domain/model';
 
-test('receitas mensais entram no plano e cada mês começa com o saldo calculado do anterior', async ({ page, request, openExamples }) => {
+test('receitas mensais entram no plano e cada mês começa com o saldo calculado do anterior', async ({ page, finance, openExamples }) => {
   await openExamples(page);
   const dialog = page.getByRole('dialog');
   async function openMonth(period: string) {
@@ -33,11 +33,15 @@ test('receitas mensais entram no plano e cada mês começa com o saldo calculado
   await openMonth('2027-01');
   await openMonth('2027-03');
   await openMonth('2026-12');
-  const { state }: { state: State } = await (await request.get('/api/state')).json();
-  expect(state.months['2026-11'].initials['a:act-r']).toBe(95000);
-  expect(state.months['2026-12'].initials).toMatchObject({ 'a:act-r': 86500, 'a:act-s': 25000, 'r:em': null });
-  expect(state.months['2026-12'].events.map(event => event.amount)).toEqual([120000]);
-  expect(state.months['2027-01'].initials).toMatchObject({ 'a:act-r': 206500, 'a:bank': null, 'r:em': null });
-  expect(state.months['2027-01'].events).toEqual([]);
-  expect(state.months['2027-03'].initials['a:act-r']).toBeNull();
+  async function month(period: string) {
+    const { state }: { state: State } = await (await finance.read(period)).json();
+    expect(Object.keys(state.months)).toEqual([period]);
+    return state.months[period];
+  }
+  expect((await month('2026-11')).initials['a:act-r']).toBe(95000);
+  expect((await month('2026-12')).initials).toMatchObject({ 'a:act-r': 86500, 'a:act-s': 25000, 'r:em': null });
+  expect((await month('2026-12')).events.map(event => event.amount)).toEqual([120000]);
+  expect((await month('2027-01')).initials).toMatchObject({ 'a:act-r': 206500, 'a:bank': null, 'r:em': null });
+  expect((await month('2027-01')).events).toEqual([]);
+  expect((await month('2027-03')).initials['a:act-r']).toBeNull();
 });

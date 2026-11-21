@@ -41,5 +41,5 @@ export const screenDescriptions = {
   savings: 'Dinheiro separado por finalidade.',
   recurring: 'Lembretes para não deixar passar subscrições e obrigações.',
   base: 'O ponto de partida dos próximos meses.',
-  settings: 'Backups, exportação, contas e categorias.',
+  settings: 'Contas, categorias e partilha deste espaço.',
 };

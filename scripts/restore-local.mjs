@@ -30,6 +30,7 @@ try {
     console.log('A copiar e verificar…');
     await restoreBackup(paths.source, paths.destination);
     console.log(`Restauro verificado: ${paths.destination}`);
+    console.log('No esquema MU5 a cópia fica em quarentena. A libertação exige o registo protegido independente e o procedimento de FASE_MU5_RESULTADOS.md.');
     console.log('Para abrir a cópia no endereço habitual, feche primeiro a instância de O meu mês.');
     console.log('Para regressar à base habitual, pare a cópia com Ctrl+C e abra Iniciar.cmd.');
     if (/^s(im)?$/i.test(await ask('Abrir a cópia agora? [s/N] '))) openPath = paths.destination;

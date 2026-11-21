@@ -7,7 +7,7 @@ const browserErrors=new WeakMap<Page,string[]>();
 test.afterEach(async({page})=>{expect(browserErrors.get(page)??[]).toEqual([]);});
 test.beforeEach(async({page,openExamples})=>{const errors:string[]=[];browserErrors.set(page,errors);page.on('pageerror',e=>errors.push(e.message));page.on('console',e=>{
   // Business-rule failures surface as HTTP 422 on the persisted path.
-  const expectedValidation=e.location().url.endsWith('/api/state')&&e.text().startsWith('Failed to load resource: the server responded with a status of 422');
+  const expectedValidation=e.location().url.split('?')[0].endsWith('/api/state')&&e.text().startsWith('Failed to load resource: the server responded with a status of 422');
   if(e.type()==='error'&&!expectedValidation)errors.push(e.text());
 });await openExamples(page);await expect(page.locator('.app-shell')).toHaveAttribute('data-ready','true');await expect(page.getByRole('heading',{name:'Mês',exact:true})).toBeVisible();await goToScreen(page,'Plano e movimentos');});
 

@@ -1,8 +1,17 @@
 import { aid, rid, type State, type Month, type Line, type Event } from './model';
 import { sum, knownSum, fail } from './validation';
 
-export const activeEvents=(m:Month)=>m.events.filter(e=>!e.voided);
-export const realized=(m:Month,id:string)=>sum(activeEvents(m).filter(e=>e.lineId===id).map(e=>e.amount));
+export const reversedIds=(m:Month)=>new Set(m.events.flatMap(e=>e.reverses?[e.reverses]:[]));
+export function activeEvents(m:Month){
+  const reversed=reversedIds(m);
+  return m.events.filter(e=>!e.voided&&!e.reverses&&!reversed.has(e.id));
+}
+function ledgerEvents(m:Month){
+  const reversed=reversedIds(m);
+  // Unconverted fixtures can still contain old annulments without an inverse.
+  return m.events.filter(e=>!e.voided||reversed.has(e.id));
+}
+export const realized=(m:Month,id:string)=>sum(ledgerEvents(m).filter(e=>e.lineId===id).map(e=>e.amount));
 export function completed(m:Month,id:string){
   const line=m.lines.find(l=>l.id===id);
   const events=activeEvents(m).filter(e=>e.lineId===id&&
@@ -13,7 +22,7 @@ export function completed(m:Month,id:string){
   );
 }
 export const pending=(m:Month,l:Line)=>completed(m,l.id)?0:l.plan==null?null:Math.max(0,sum([l.plan,-realized(m,l.id)]));
-export const effects=(m:Month,source:string)=>sum(activeEvents(m).map(e=>e.deltas[source]??0));
+export const effects=(m:Month,source:string)=>sum(ledgerEvents(m).map(e=>e.deltas[source]??0));
 export const balance=(m:Month,source:string)=>m.initials[source]==null?null:sum([m.initials[source]!,effects(m,source)]);
 export const initialPlan=(m:Month,l:Line)=>{if(!m.snapshot)return null;const original=m.snapshot.lines.find(x=>x.id===l.id);return original?original.plan:0;};
 export const plannedSource=(l:Line)=>l.kind==='expense'&&l.reserveId?rid(l.reserveId):aid(l.accountId);
@@ -25,6 +34,7 @@ export const budgetRemainders=(m:Month)=>m.lines.filter(l=>l.kind==='expense'&&l
 });
 export const budgetRemainder=(m:Month)=>knownSum(budgetRemainders(m).map(row=>row.remaining));
 export function canDeleteAccount(s:State,id:string){
+  if(s.usedAccounts?.includes(id))return false;
   const source=aid(id);
   const usesAccount=(entry:{accountId:string})=>entry.accountId===id;
   return !s.reserves.some(usesAccount)&&!s.base.some(usesAccount)&&!s.recurring.some(usesAccount)&&
@@ -42,18 +52,25 @@ export const savingProgress=(m:Month,reserveId:string)=>{
     saved:sum(goals.map(l=>realized(m,l.id))),remaining:goals.length?savingPending(m,reserveId):null};
 };
 export function freeSaving(m:Month,e:Event,reserveId:string){
-  if(e.voided)return 0;
+  if(e.voided||e.reverses||reversedIds(m).has(e.id))return 0;
   const extra=e.saving?.reserveId===reserveId?e.saving.extra:e.type==='transfer'?Math.max(0,e.deltas[rid(reserveId)]??0):0;
   return extra?sum([extra,...activeEvents(m).filter(x=>x.savingParentId===e.id).map(x=>-x.amount)]):0;
 }
-export function precedingMonth(s:State,period:string):Month|undefined{
+export function previousPeriod(period:string){
   const [year,month]=period.split('-').map(Number);
   const preceding=month===1?`${String(year-1).padStart(4,'0')}-12`:`${period.slice(0,5)}${String(month-1).padStart(2,'0')}`;
-  return s.months[preceding];
+  return preceding;
+}
+export function precedingMonth(s:State,period:string):Month|undefined{
+  return s.months[previousPeriod(period)];
 }
 export function previousSavingBalance(s:State,m:Month,reserveId:string){
   const previous=precedingMonth(s,m.period);
-  if(!previous)return null;
+  if(!previous){
+    const prior=s.previousBalances;
+    const amount=prior?.balances[rid(reserveId)];
+    return prior?.period===previousPeriod(m.period)&&amount!=null?{period:prior.period,amount}:null;
+  }
   const amount=balance(previous,rid(reserveId));
   return amount===null?null:{period:previous.period,amount};
 }

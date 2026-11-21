@@ -1,5 +1,5 @@
-import { expect, test } from './application';
-import type { APIRequestContext, Locator, Page } from '@playwright/test';
+import { expect, test, type FinanceApi } from './application';
+import type { Locator, Page } from '@playwright/test';
 import { goToScreen } from './navigation';
 import type { Action } from '../../src/modules/finance/domain/engine';
 import type { Confirmed } from '../../src/modules/finance/infrastructure/repository';
@@ -12,14 +12,14 @@ const account=(page:Page,name:string)=>page.locator('.account-card').filter({has
 const launch=(page:Page)=>page.getByRole('button',{name:'Quanto transferir para cada conta'});
 const batch=(page:Page)=>dialog(page).getByRole('button',{name:/Registar \d+ transferências? já efetuadas?/});
 const capture=(page:Page,name:string)=>page.screenshot({path:test.info().outputPath(`fase-6-revisao/${name}.png`)});
-const snapshot=async(api:APIRequestContext,period:string):Promise<Confirmed>=>(await api.get('/api/state?period='+period)).json();
+const snapshot=async(api:FinanceApi,period:string):Promise<Confirmed>=>(await api.read(period)).json();
 const balanceOf=(month:Month,source:string)=>(month.initials[source]??0)+month.events.filter(e=>!e.voided).reduce((n,e)=>n+(e.deltas[source]??0),0);
 
-async function post(api:APIRequestContext,period:string,revision:number,action:Action,requestId=crypto.randomUUID()){
-  return api.post('/api/state',{data:{period,revision,requestId,action}});
+async function post(api:FinanceApi,period:string,revision:number,action:Action,requestId=crypto.randomUUID()){
+  return api.command({period,revision,requestId,action});
 }
-async function seed(api:APIRequestContext,period:string,actions:Action[]){
-  const initial=await snapshot(api,period);
+async function seed(api:FinanceApi,period:string,actions:Action[]){
+  const initial=await (await api.read()).json();
   const opened=await post(api,initial.state.selected,initial.revision,{type:'month',period});
   expect(opened.ok(),await opened.text()).toBe(true);
   let current:Confirmed=await opened.json();
@@ -47,16 +47,16 @@ async function invalid(field:Locator,message:RegExp){
   await expect(field).toBeFocused();
 }
 
-test('duas sessões recusam 50 €, reveem 35 € e repetem o pedido gravado sem duplicar',async({page,browser,request,baseURL})=>{
+test('duas sessões recusam 50 €, reveem 35 € e repetem o pedido gravado sem duplicar',async({page,browser,finance,baseURL,loginSibling})=>{
   const period='2080-11';
-  await seed(request,period,[expense('review-san','Seguro fictício',5000,'san'),
+  await seed(finance,period,[expense('review-san','Seguro fictício',5000,'san'),
     {type:'initial',source:'a:act-r',amount:5000},{type:'initial',source:'a:san',amount:0}]);
   await openPeriod(page,period);
   await goToScreen(page,'Contas');
   await launch(page).click();
   const route=dialog(page).getByTestId('route-act-r-san');
   await expect(route).toContainText('50,00');
-  const old=await snapshot(request,period);
+  const old=await snapshot(finance,period);
   let staleRead=true;
   await page.route('**/api/state*',async interceptor=>{
     const req=interceptor.request();
@@ -68,6 +68,7 @@ test('duas sessões recusam 50 €, reveem 35 € e repetem o pedido gravado sem
     }else await interceptor.continue();
   });
   const second=await browser.newContext({baseURL});
+  await loginSibling(second);
   try{
     const other=await second.newPage();
     await openPeriod(other,period);
@@ -77,21 +78,21 @@ test('duas sessões recusam 50 €, reveem 35 € e repetem o pedido gravado sem
     await dialog(other).getByLabel('Motivo da diferença').fill('Conferência fictícia');
     await confirm(other).click();
     await expect(dialog(other)).toHaveCount(0);
-    const refusal=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().endsWith('/api/state'));
+    const refusal=page.waitForResponse(r=>r.request().method()==='POST'&&r.url().split('?')[0].endsWith('/api/state'));
     await batch(page).click();
     expect((await refusal).status()).toBe(409);
     await expect(dialog(page).getByRole('alert')).toContainText('montantes sugeridos mudaram');
     await expect(dialog(page).getByRole('alert')).toContainText(/de 50,00.*para 35,00/);
     await expect(batch(page)).toBeDisabled();
     await expect(route).toContainText('50,00');
-    const intermediate=await snapshot(request,period);
+    const intermediate=await snapshot(finance,period);
     const m=intermediate.state.months[period];
     expect(m.events.map(e=>e.deltas)).toEqual([{'a:act-r':-1500}]);
     expect(balanceOf(m,'a:act-r')).toBe(3500);
     expect(balanceOf(m,'a:san')).toBe(0);
-    const forged=await post(request,period,intermediate.revision,{type:'recordSuggestedTransfers',period,date:period+'-18',routes:[{source:'a:act-r',destination:'a:san',amount:5000}]});
+    const forged=await post(finance,period,intermediate.revision,{type:'recordSuggestedTransfers',period,date:period+'-18',routes:[{source:'a:act-r',destination:'a:san',amount:5000}]});
     expect(forged.status()).toBe(422);
-    expect((await snapshot(request,period)).revision).toBe(intermediate.revision);
+    expect((await snapshot(finance,period)).revision).toBe(intermediate.revision);
     await dialog(page).getByRole('button',{name:'Rever nova lista'}).click();
     await expect(route).toContainText('35,00');
     await expect(dialog(page).getByTestId('uncovered-san')).toContainText('15,00');
@@ -103,7 +104,7 @@ test('duas sessões recusam 50 €, reveem 35 € e repetem o pedido gravado sem
     await capture(page,'lote-revisto');
     await page.unroute('**/api/state*');
     let loseResponse=true;
-    await page.route('**/api/state',async interceptor=>{
+    await page.route('**/api/state*',async interceptor=>{
       if(loseResponse&&interceptor.request().method()==='POST'){
         const result=await interceptor.fetch();
         expect(result.ok()).toBe(true);
@@ -112,22 +113,22 @@ test('duas sessões recusam 50 €, reveem 35 € e repetem o pedido gravado sem
       }else await interceptor.continue();
     });
     await batch(page).dblclick();
-    await dialog(page).getByRole('button',{name:'Repetir confirmação'}).click();
+    await dialog(page).getByRole('button',{name:'Verificar confirmação'}).click();
     await expect(dialog(page)).toHaveCount(0);
     await page.reload();
     await page.getByLabel('Mês selecionado').selectOption(period);
     await goToScreen(page,'Contas');
     await expect(account(page,'ActivoBank A').locator('.balance-value')).toContainText('0,00');
     await expect(account(page,'Santander').locator('.balance-value')).toContainText('35,00');
-    const saved=(await snapshot(request,period)).state.months[period];
+    const saved=(await snapshot(finance,period)).state.months[period];
     expect(saved.events.filter(e=>e.type==='transfer')).toMatchObject([{date:period+'-18',deltas:{'a:act-r':-3500,'a:san':3500}}]);
     expect([balanceOf(saved,'a:act-r'),balanceOf(saved,'a:san')]).toEqual([0,3500]);
   }finally{await second.close();}
 });
 
-test('compra vazia, prévia 40 → 60, erros no campo e recibo de pagamento',async({page,request})=>{
+test('compra vazia, prévia 40 → 60, erros no campo e recibo de pagamento',async({page,finance})=>{
   const period='2081-11';
-  await seed(request,period,[expense('review-food','Comida',20000,'act-r',{variable:true}),expense('review-rent','Habitação',8500),
+  await seed(finance,period,[expense('review-food','Comida',20000,'act-r',{variable:true}),expense('review-rent','Habitação',8500),
     {type:'initial',source:'a:act-r',amount:50000}]);
   await page.setViewportSize({width:390,height:560});
   await openPeriod(page,period);
@@ -139,7 +140,7 @@ test('compra vazia, prévia 40 → 60, erros no campo e recibo de pagamento',asy
   await expect(amount(page)).toHaveValue('');
   await save();
   await invalid(amount(page),/montante válido/);
-  let m=(await snapshot(request,period)).state.months[period];
+  let m=(await snapshot(finance,period)).state.months[period];
   expect(m.events).toHaveLength(0);
   expect(balanceOf(m,'a:act-r')).toBe(50000);
   await amount(page).fill('40');
@@ -160,7 +161,7 @@ test('compra vazia, prévia 40 → 60, erros no campo e recibo de pagamento',asy
   await total.fill('30');
   await save();
   await invalid(total,/inferior às compras conhecidas/);
-  expect((await snapshot(request,period)).state.months[period].events).toHaveLength(1);
+  expect((await snapshot(finance,period)).state.months[period].events).toHaveLength(1);
   await total.fill('60');
   const preview=dialog(page).locator('.total-preview');
   await expect(preview).toContainText(/Gasto já registado40,00/);
@@ -172,7 +173,7 @@ test('compra vazia, prévia 40 → 60, erros no campo e recibo de pagamento',asy
   await expect(food.locator('.realized')).toBeVisible();
   await expect(food.locator('.realized')).toContainText('60,00');
   await expect(food.locator('.payment-feedback')).toContainText(/Total gasto de 60,00.*Débito adicional de 20,00/);
-  m=(await snapshot(request,period)).state.months[period];
+  m=(await snapshot(finance,period)).state.months[period];
   expect(m.events.map(e=>[e.type,e.amount,e.deltas])).toEqual([['execution',4000,{'a:act-r':-4000}],['total',2000,{'a:act-r':-2000}]]);
   expect(balanceOf(m,'a:act-r')).toBe(44000);
   const rent=page.getByTestId('line-review-rent');
@@ -194,12 +195,12 @@ test('compra vazia, prévia 40 → 60, erros no campo e recibo de pagamento',asy
   await expect(rent.getByRole('button',{name:'Ver registo'})).toHaveCount(0);
   await rent.getByRole('button',{name:'Detalhe de Habitação'}).click();
   await expect(dialog(page).locator('.history')).toContainText('85,00');
-  expect(balanceOf((await snapshot(request,period)).state.months[period],'a:act-r')).toBe(35500);
+  expect(balanceOf((await snapshot(finance,period)).state.months[period],'a:act-r')).toBe(35500);
 });
 
-test('reserva homónima selecionada no cartão mantém o ID e a falta fica visível',async({page,request})=>{
+test('reserva homónima selecionada no cartão mantém o ID e a falta fica visível',async({page,finance})=>{
   const period='2082-11';
-  await seed(request,period,[
+  await seed(finance,period,[
     {type:'reserve',reserve:{id:'review-first',name:'Reserva de ensaio',accountId:'moey-r'}},
     {type:'initial',source:'r:review-first',amount:30000},
     {type:'reserve',reserve:{id:'review-second',name:'Reserva de ensaio',accountId:'moey-r'}},
@@ -233,7 +234,7 @@ test('reserva homónima selecionada no cartão mantém o ID e a falta fica visí
   await goToScreen(page,'Poupanças');
   await expect(first.locator('.balance-value')).toContainText('300,00');
   await expect(second.locator('.balance-value')).toContainText('110,00');
-  const month=(await snapshot(request,period)).state.months[period];
+  const month=(await snapshot(finance,period)).state.months[period];
   expect(month.events.map(e=>e.deltas)).toEqual([{'a:moey-r':-1000,'r:review-second':1000}]);
   expect(['r:review-first','r:review-second','a:moey-r'].map(id=>balanceOf(month,id))).toEqual([30000,11000,49000]);
 });
@@ -270,11 +271,12 @@ test('Seguro do Carro requer associação explícita e a pesquisa reage ao renom
   await expect(page.locator('.catalog-row').getByText('Conta renomeada')).toBeVisible();
 });
 
-test('resumo com números extensos, reflow, contraste, toque e ajuda por teclado',async({browser,baseURL,request})=>{
+test('resumo com números extensos, reflow, contraste, toque e ajuda por teclado',async({browser,baseURL,finance,loginSibling})=>{
   const period='2083-11';
-  await seed(request,period,[expense('review-large','Compromisso fictício',234567890123456),
+  await seed(finance,period,[expense('review-large','Compromisso fictício',234567890123456),
     {type:'initial',source:'a:act-r',amount:123456789012345}]);
   const context=await browser.newContext({baseURL,hasTouch:true,locale:'pt-PT'});
+  await loginSibling(context);
   try{
     const page=await context.newPage();
     await openPeriod(page,period);
@@ -332,16 +334,16 @@ test('resumo com números extensos, reflow, contraste, toque e ajuda por teclado
   }finally{await context.close();}
 });
 
-test('atualização em diálogo invalida a revisão e o percurso individual grava só uma rota',async({page,request})=>{
+test('atualização em diálogo invalida a revisão e o percurso individual grava só uma rota',async({page,finance})=>{
   const period='2084-11';
-  await seed(request,period,[expense('review-partial','Despesa fictícia',10000,'san'),
+  await seed(finance,period,[expense('review-partial','Despesa fictícia',10000,'san'),
     {type:'initial',source:'a:act-r',amount:5000},{type:'initial',source:'a:moey-r',amount:3500},{type:'initial',source:'a:san',amount:0}]);
   await openPeriod(page,period);
   await goToScreen(page,'Contas');
   await launch(page).click();
   await expect(dialog(page).getByTestId('route-act-r-san')).toContainText('50,00');
-  const reviewed=await snapshot(request,period);
-  const update=await post(request,period,reviewed.revision,{type:'reconcile',source:'a:act-r',amount:4000,date:period+'-12',note:'Conferência fictícia'});
+  const reviewed=await snapshot(finance,period);
+  const update=await post(finance,period,reviewed.revision,{type:'reconcile',source:'a:act-r',amount:4000,date:period+'-12',note:'Conferência fictícia'});
   expect(update.ok(),await update.text()).toBe(true);
   await expect(batch(page)).toBeDisabled({timeout:10000});
   await expect(dialog(page).getByRole('alert')).toContainText('montantes sugeridos mudaram');
@@ -349,14 +351,14 @@ test('atualização em diálogo invalida a revisão e o percurso individual grav
   await expect(dialog(page).getByTestId('route-act-r-san')).toContainText('40,00');
   await page.keyboard.press('Escape');
   await expect(launch(page)).toBeFocused();
-  expect((await snapshot(request,period)).state.months[period].events).toHaveLength(1);
+  expect((await snapshot(finance,period)).state.months[period].events).toHaveLength(1);
   await launch(page).click();
   await dialog(page).getByTestId('route-moey-r-san').getByRole('button',{name:'Preparar esta transferência'}).click();
   await expect(amount(page)).toHaveValue('35,00');
   await dialog(page).getByLabel('Data',{exact:true}).fill(period+'-13');
   await confirm(page).click();
   await expect(dialog(page)).toHaveCount(0);
-  const saved=(await snapshot(request,period)).state.months[period];
+  const saved=(await snapshot(finance,period)).state.months[period];
   expect(saved.events.filter(e=>e.type==='transfer')).toMatchObject([{date:period+'-13',deltas:{'a:moey-r':-3500,'a:san':3500}}]);
   expect(['a:act-r','a:moey-r','a:san'].map(source=>balanceOf(saved,source))).toEqual([4000,0,3500]);
 });

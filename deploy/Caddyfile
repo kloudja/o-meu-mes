@@ -1,0 +1,3 @@
+omeumes.pt {
+    import /etc/caddy/omeumes-route.caddy
+}

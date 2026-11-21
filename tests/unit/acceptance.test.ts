@@ -24,13 +24,13 @@ describe('Correções e anulações — resultados independentes',()=>{
   it('pagamento corrigido muda origem e montante sem alterar a referência ou contar duas vezes',()=>{
     let s=act(examples(),pay('services',4000),'payment');s=act(s,{type:'correct',id:'payment',replacement:pay('services',2500,B)});
     expect(balance(month(s),A)).toBe(95000);expect(balance(month(s),B)).toBe(22500);expect(realized(month(s),'services')).toBe(2500);
-    expect(month(s).events[0].voided).toBe(true);expect(month(s).events[1].corrects).toBe('payment');
-    s=act(s,{type:'void',id:month(s).events[1].id});expect(balance(month(s),B)).toBe(25000);expect(realized(month(s),'services')).toBe(0);
+    expect(month(s).events[0].voided).toBeUndefined();expect(month(s).events[1].reverses).toBe('payment');expect(month(s).events[2].corrects).toBe('payment');
+    s=act(s,{type:'void',id:month(s).events[2].id});expect(balance(month(s),B)).toBe(25000);expect(realized(month(s),'services')).toBe(0);
   });
   it('recebimento corrigido 100 para 60 noutra conta e anulado',()=>{
     let s=act(examples(),pay('income',10000),'receipt');s=act(s,{type:'correct',id:'receipt',replacement:pay('income',6000,B)});
     expect(balance(month(s),A)).toBe(95000);expect(balance(month(s),B)).toBe(31000);expect(realized(month(s),'income')).toBe(6000);
-    s=act(s,{type:'void',id:month(s).events[1].id});expect(balance(month(s),B)).toBe(25000);
+    s=act(s,{type:'void',id:month(s).events[2].id});expect(balance(month(s),B)).toBe(25000);
   });
   it('anulação de recebimento gasto rejeitada, correção suficiente é atómica',()=>{
     let s=small();month(s).initials[A]=0;s=act(s,pay('income',10000),'receipt');s=act(s,pay('services',4000));
@@ -64,7 +64,7 @@ describe('Correções e anulações — resultados independentes',()=>{
     let s=act(small(),pay('services',4000));s=act(s,reconcile(),'adjustment');s=act(s,reconcile(),'adjustment');
     expect(balance(month(s),A)).toBe(5500);expect(month(s).events[1].deltas[A]).toBe(-500);
     s=act(s,{type:'correct',id:'adjustment',replacement:reconcile(5800)},'correct-adjustment');
-    expect(balance(month(s),A)).toBe(5800);expect(month(s).events[2].deltas[A]).toBe(-200);expect(month(s).initials[A]).toBe(10000);
+    expect(balance(month(s),A)).toBe(5800);expect(month(s).events.find(e=>e.id==='correct-adjustment')?.deltas[A]).toBe(-200);expect(month(s).initials[A]).toBe(10000);
     s=act(s,{type:'void',id:'correct-adjustment'});expect(balance(month(s),A)).toBe(6000);
   });
   it('conferência positiva já consumida não pode ser anulada',()=>{
@@ -139,7 +139,7 @@ describe('Referências, desconhecidos e isolamento',()=>{
     expect(initialPlan(month(s),month(s).lines[1])).toBe(10000);expect(pending(month(s),month(s).lines[1])).toBe(8000);
     expect(month(s).snapshot!.catalog.accounts[0].name).toBe('ActivoBank A');expect(month(s).snapshot!.lines[1].name).toBe('Serviços Essenciais');expect(month(s).events[0].sourceNames![A]).toBe('ActivoBank A');
     rejected(s,{type:'removeLine',id:'services'},'HISTORY');s=act(s,{type:'void',id:'pay'});s=act(s,{type:'removeLine',id:'services'});
-    expect(month(s).snapshot!.lines[1].plan).toBe(10000);expect(month(s).removedLines!.find(l=>l.id==='services')!.plan).toBe(12000);expect(month(s).events).toHaveLength(1);
+    expect(month(s).snapshot!.lines[1].plan).toBe(10000);expect(month(s).removedLines!.find(l=>l.id==='services')!.plan).toBe(12000);expect(month(s).events).toHaveLength(2);
     rejected(s,{type:'line',line:{...month(s).removedLines![0]}},'ACCOUNT');
   });
   it('novo ID após snapshot é zero; desconhecido inicial continua null',()=>{

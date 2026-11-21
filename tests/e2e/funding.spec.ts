@@ -57,7 +57,7 @@ test('compra por outro banco mostra o acerto no mês até registar a transferên
   await expect(page.getByText('O histórico deste mês não tem pagamentos por outra conta por repor.')).toBeVisible();
 });
 
-test('o resumo distingue falta para o plano, reposição e ausência de histórico', async ({page,request,openExamples})=>{
+test('o resumo distingue falta para o plano, reposição e ausência de histórico', async ({page,finance,openExamples})=>{
   await openExamples(page);
   const review=page.getByRole('region',{name:'O que rever neste mês'});
   await expect(review).toContainText('Ainda não há movimentos registados neste mês');
@@ -65,15 +65,15 @@ test('o resumo distingue falta para o plano, reposição e ausência de históri
   await review.getByText('1 conta por apurar',{exact:true}).click();
   await expect(review.getByText('BankInter A · Saldo inicial por indicar.')).toBeVisible();
   for(const [lineId,source,amount] of [['food','a:san',2500],['mimos','a:moey-s',1050]] as const){
-    const {state,revision}=await (await request.get('/api/state')).json();
-    const response=await request.post('/api/state',{data:{period:state.selected,revision,requestId:`alignment-${lineId}`,
-      action:{type:'execute',lineId,source,amount,date:`${state.selected}-02`,complete:false}}});
+    const {state,revision}=await (await finance.read()).json();
+    const response=await finance.command({period:state.selected,revision,requestId:`alignment-${lineId}`,
+      action:{type:'execute',lineId,source,amount,date:`${state.selected}-02`,complete:false}});
     expect(response.ok()).toBe(true);
   }
   for(const [source,amount] of [['a:act-s',4450],['r:em',0]] as const){
-    const {state,revision}=await (await request.get('/api/state')).json();
-    const response=await request.post('/api/state',{data:{period:state.selected,revision,requestId:`review-${source}`,
-      action:{type:'reconcile',source,amount,date:`${state.selected}-03`,note:'Conferência fictícia'}}});
+    const {state,revision}=await (await finance.read()).json();
+    const response=await finance.command({period:state.selected,revision,requestId:`review-${source}`,
+      action:{type:'reconcile',source,amount,date:`${state.selected}-03`,note:'Conferência fictícia'}});
     expect(response.ok()).toBe(true);
   }
   await page.reload();
@@ -99,7 +99,7 @@ test('o resumo distingue falta para o plano, reposição e ausência de históri
   }
 });
 
-test('Corrigir mostra a transferência e o atalho deixa o botão de Contas à vista no telemóvel',async({page,request,openExamples},info)=>{
+test('Corrigir mostra a transferência e o atalho deixa o botão de Contas à vista no telemóvel',async({page,finance,openExamples},info)=>{
   await page.setViewportSize({width:390,height:700});
   await openExamples(page);
   const correction=page.getByRole('button',{name:'Corrigir falta em Santander'});
@@ -120,9 +120,9 @@ test('Corrigir mostra a transferência e o atalho deixa o botão de Contas à vi
   expect(button!.y).toBeGreaterThanOrEqual(header!.y+header!.height);
   await page.screenshot({path:info.outputPath('atalho-contas.png')});
 
-  const {state,revision}=await (await request.get('/api/state')).json();
-  const response=await request.post('/api/state',{data:{period:state.selected,revision,requestId:'missing-account-for-correction',
-    action:{type:'line',line:{id:'unassigned-expense',kind:'expense',name:'Despesa sem conta',plan:1000,accountId:'',categoryId:''}}}});
+  const {state,revision}=await (await finance.read()).json();
+  const response=await finance.command({period:state.selected,revision,requestId:'missing-account-for-correction',
+    action:{type:'line',line:{id:'unassigned-expense',kind:'expense',name:'Despesa sem conta',plan:1000,accountId:'',categoryId:''}}});
   expect(response.ok()).toBe(true);
   await page.reload();
   await expect(shortages.getByText('Faltam 50,00 €',{exact:true})).toBeVisible();

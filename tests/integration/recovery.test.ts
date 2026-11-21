@@ -1,17 +1,27 @@
 import { spawn, execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { chromium, expect as browserExpect } from '@playwright/test';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { DatabaseSync } from 'node:sqlite';
+import { createBackup } from '../../src/server/local-files.mjs';
+import { migrateSynthetic } from '../migrate-synthetic';
+import { createSpace } from '../../src/modules/spaces/schema.mjs';
+import { authorizeSpace } from '../../src/modules/spaces/access';
+import { readMonth } from '../../src/modules/finance/infrastructure/repository';
+import { assignLegacy } from '../../src/server/assign-legacy.mjs';
+import { migrations, migrate } from '../../src/server/storage.mjs';
 import { expect, it } from 'vitest';
 import { balance, realized, sourceTotals, summary, type Action } from '../../src/modules/finance/domain/engine';
-import type { Command, Confirmed } from '../../src/modules/finance/infrastructure/repository';
+import { Repository, type Command } from '../legacy/repository';
 import { writeTestCatalog } from '../fixtures';
 
-function windowsCommand(path: string, command: string, port?: number) {
+function windowsCommand(path: string, command: string, port: number, authorize=false) {
   const child = spawn('cmd.exe', ['/d', '/c', command], {
-    env: { ...process.env, OMEUMES_TEST_MODE: '1', OMEUMES_DB_PATH: path, OMEUMES_TEST_PORT: port?.toString() },
+    env: { ...process.env, OMEUMES_TEST_MODE: '1', OMEUMES_DB_PATH: path, OMEUMES_TEST_PORT: String(port),
+      OMEUMES_AUTH_KEY:randomBytes(32).toString('base64'), OMEUMES_AUTH_ORIGIN:'http://127.0.0.1:'+port,
+      OMEUMES_TEST_TRANSITION:authorize?'MU5':'', OMEUMES_MAIL_TRANSPORT:'test' },
     stdio: 'pipe', windowsHide: true,
   });
   let log = '';
@@ -36,7 +46,7 @@ async function ready(command: ReturnType<typeof windowsCommand>) {
   for (let attempt = 0; attempt < 120; attempt++) {
     const url = command.log().match(/Abra (http:\/\/127\.0\.0\.1:\d+)/)?.[1];
     if (url) {
-      try { if ((await fetch(url + '/api/state')).ok) return url; } catch {}
+      try { if ((await fetch(url + '/api/state')).status===403) return url; } catch {}
     }
     if (command.child.exitCode !== null) break;
     await new Promise(resolve => setTimeout(resolve, 100));
@@ -44,10 +54,7 @@ async function ready(command: ReturnType<typeof windowsCommand>) {
   throw new Error(command.log());
 }
 
-const get = async (url: string, period?: string): Promise<Confirmed> =>
-  (await fetch(url + '/api/state' + (period ? '?period=' + period : ''))).json();
-const post = (url: string, endpoint: string, body?: unknown, origin = url) =>
-  fetch(url + endpoint, { method: 'POST', headers: { origin, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+const hash=(path:string)=>createHash('sha256').update(readFileSync(path)).digest('hex');
 
 it.skipIf(process.platform !== 'win32')('recusa uma porta ocupada e usa o mesmo endereço para abrir a cópia recuperada', async () => {
   const root = mkdtempSync(join(tmpdir(), 'omeumes-test-recovery-'));
@@ -66,12 +73,21 @@ it.skipIf(process.platform !== 'win32')('recusa uma porta ocupada e usa o mesmo 
   } finally {
     await new Promise<void>(resolve => occupied.close(() => resolve()));
   }
-  const server = windowsCommand(original, 'Iniciar.cmd', port);
-  try {
-    const url = await ready(server);
-    expect(url).toBe(`http://127.0.0.1:${port}`);
-    expect((await fetch(url+'/demo')).status).toBe(404);
-    const first = await get(url);
+  // Construct the last pre-MU schema, including a sentinel outside the financial projection.
+  migrateSynthetic(original,migrations.slice(0,4));
+  const legacy=new DatabaseSync(original);
+  const previous=String(legacy.prepare('SELECT period FROM months').get()?.period);
+  legacy.prepare('INSERT INTO excel_imports VALUES(?,?)').run(previous,'{"source":"synthetic"}');
+  legacy.close();
+  const beforeTransition=hash(original), filesBefore=readdirSync(root);
+  const refused=windowsCommand(original,'Iniciar.cmd',port);
+  refused.child.stdin.end();
+  expect(await refused.done).toBe(1);
+  expect(refused.log()).toContain('Transição multiutilizador por autorizar');
+  expect(hash(original)).toBe(beforeTransition);
+  expect(readdirSync(root)).toEqual(filesBefore);
+    const repository=new Repository(original);
+    const first=repository.read();
     const period = first.state.selected;
     const next = new Date(`${period}-01T00:00:00Z`);
     next.setUTCMonth(next.getUTCMonth() + 1);
@@ -84,9 +100,7 @@ it.skipIf(process.platform !== 'win32')('recusa uma porta ocupada e usa o mesmo 
     let revision = first.revision;
     async function send(requestId: string, action: Action, target = period) {
       const command: Command = { requestId, revision, action, period: target };
-      const response = await post(url, '/api/state', command);
-      expect(response.ok, await response.clone().text()).toBe(true);
-      revision = (await response.json()).revision;
+      revision=repository.command(command).revision;
       return command;
     }
     const expense = { id: 'compra', name: 'Compra fictícia — revisão, café', kind: 'expense' as const,
@@ -116,37 +130,38 @@ it.skipIf(process.platform !== 'win32')('recusa uma porta ocupada e usa o mesmo 
     await send('segundo-mes', { type: 'month', period: nextPeriod });
     await send('ligar', { type: 'occurrence', id: `revisao:${nextPeriod}`, mode: 'add' }, nextPeriod);
     await send('dispensar', { type: 'occurrence', id: `dispensa:${nextPeriod}`, mode: 'dismiss' }, nextPeriod);
-    const before = await get(url, period);
+    const before = repository.read(period);
     expect(Object.keys(before.state.months)).toEqual([period, nextPeriod]);
 
-    const endpoint = '/api/local-files?action=';
-    expect((await post(url, endpoint + 'backup', undefined, 'https://exemplo.invalid')).status).toBe(403);
-    expect((await post(url, endpoint + 'export', undefined, 'https://exemplo.invalid')).status).toBe(403);
-    expect(existsSync(join(root, 'backups'))).toBe(false);
-    const exported = await post(url, endpoint + 'export');
-    expect(exported.headers.get('content-type')).toContain('charset=utf-8');
-    expect(exported.headers.get('cache-control')).toBe('no-store');
-    expect(await exported.json()).toMatchObject({
-      format: 'o-meu-mes-export', version: 1, currency: 'EUR', moneyUnit: 'cent', revision,
-      accounts: before.state.accounts, categories: before.state.categories, reserves: before.state.reserves,
-      base: before.state.base, recurring: before.state.recurring, months: before.state.months,
-    });
-    writeFileSync(join(root, 'backups'), 'bloquear criação da pasta');
-    expect((await post(url, endpoint + 'backup')).status).toBe(503);
-    expect(await get(url, period)).toEqual(before);
-    expect(readFileSync(join(root, 'backups'), 'utf8')).toBe('bloquear criação da pasta');
-    // Free the intended directory name without removing the failure fixture.
-    const { renameSync } = await import('node:fs');
-    renameSync(join(root, 'backups'), join(root, 'bloqueio-backup.txt'));
-    const backupResponse = await post(url, endpoint + 'backup');
-    expect(backupResponse.ok, await backupResponse.clone().text()).toBe(true);
-    const backup = await backupResponse.json();
-    expect(existsSync(backup.path)).toBe(true);
+    const target=join(root,'espaços.sqlite');
+    migrate(target,undefined,true);
+    const userId=randomUUID();
+    const setup=new DatabaseSync(target);
+    setup.exec('BEGIN IMMEDIATE');
+    setup.prepare("INSERT INTO users(id,first_name,last_name,email,verified,country,adult_at,created) VALUES(?,'Ana','Teste','a@example.invalid',1,'PT',1,1)").run(userId);
+    const space=createSpace(setup,userId,'Recuperação',randomUUID());
+    setup.exec('COMMIT');setup.close();
+    const oldBackup=await createBackup(original);
+    assignLegacy(oldBackup.path,target,userId,String(space.id));
+    const inspect=(path:string,month:string)=>{
+      const db=new DatabaseSync(path,{readOnly:true});
+      try{db.exec('BEGIN');return readMonth(db,authorizeSpace(db,userId,String(space.id),'read'),month);}finally{db.close();}
+    };
+    const expected=inspect(target,period);
+    const server=windowsCommand(target,'Iniciar.cmd',port);
+    try{
+      const url=await ready(server);
+      expect(url).toBe(`http://127.0.0.1:${port}`);
+      expect((await fetch(url+'/demo')).status).toBe(404);
+    for(const action of ['backup','export']){
+      expect((await fetch(url+'/api/local-files?action='+action,{method:'POST',headers:{origin:url}})).status).toBe(403);
+    }
+    const backup=await createBackup(target);
     const backupBytes = readFileSync(backup.path);
     await server.stop();
-    const originalBytes = readFileSync(original);
+    const originalBytes = readFileSync(target);
 
-    const recovery = windowsCommand(original, 'Restaurar.cmd', port);
+    const recovery = windowsCommand(target, 'Restaurar.cmd', port);
     recovery.child.stdin.end(`"${backup.path}"\n"${restored}"\ns\ns\n`, 'utf8');
     try {
       const recoveryUrl = await ready(recovery);
@@ -156,10 +171,11 @@ it.skipIf(process.platform !== 'win32')('recusa uma porta ocupada e usa o mesmo 
       expect(log.indexOf('Destino:')).toBeLessThan(log.indexOf('A copiar e verificar'));
       expect(log).toContain('Restauro verificado');
       expect(recoveryUrl).toBe(url);
-      const recovered = await get(recoveryUrl, period);
-      expect(recovered).toEqual(before);
+      expect((await fetch(recoveryUrl+'/api/identity')).status).toBe(503);
+      const recovered=inspect(restored,period);
+      expect(recovered).toEqual(expected);
       const m = recovered.state.months[period];
-      const second = recovered.state.months[nextPeriod];
+      const second = inspect(restored,nextPeriod).state.months[nextPeriod];
       expect([balance(m, A), balance(m, B), balance(m, R)]).toEqual([61000, 45000, 8500]);
       expect(balance(m, 'a:bank')).toBeNull();
       expect(realized(m, expense.id) + realized(m, reservedExpense.id)).toBe(5500);
@@ -170,35 +186,20 @@ it.skipIf(process.platform !== 'win32')('recusa uma porta ocupada e usa o mesmo 
       expect(second.events).toEqual([]);
       expect(second.initials).toMatchObject({ [A]: 61000, [B]: 45000, [R]: null, 'a:bank': null });
       expect(second.occurrences.map(o => [o.state, o.amount])).toEqual([['linked', null], ['dismissed', 1234]]);
-      const replay = await (await post(recoveryUrl, '/api/state', payment)).json();
-      expect(replay).toEqual({ ...recovered, replay: true });
-      expect(await get(recoveryUrl, period)).toEqual(before);
       expect(m.events).toHaveLength(4);
 
-      const browser = await chromium.launch({
-        executablePath: process.env.BROWSER_PATH || 'C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe',
-      });
+      const db=new DatabaseSync(restored,{readOnly:true});
       try {
-        const page = await browser.newPage({ viewport: { width: 1366, height: 768 }, locale: 'pt-PT' });
-        await page.addInitScript(() => localStorage.setItem('omeumes.pending.v1:teste', '{}'));
-        await page.goto(recoveryUrl);
-        await browserExpect(page.locator('.storage-banner')).toContainText('Cópia recuperada');
-        await browserExpect(page.getByRole('button', { name: 'Repetir confirmação' })).toHaveCount(0);
-        await page.getByLabel('Mês selecionado').selectOption(period);
-        await browserExpect(page.getByLabel('Mês selecionado')).toHaveValue(period);
-        const metric = (label: RegExp) => page.locator('.metric').filter({ hasText: label }).locator('strong');
-        await browserExpect(metric(/^Saldo atual das contas/)).toContainText('1.060,00');
-        await browserExpect(metric(/^Despesas por pagar/)).toContainText('75,00');
-        await page.getByRole('navigation').getByRole('button',{name:'Plano e movimentos',exact:true}).click();
-        await browserExpect(page.getByTestId('line-compra')).toContainText('40,00');
-        await page.screenshot({ path: join(root, 'copia-recuperada-1366.png'), animations: 'disabled' });
-      } finally { await browser.close(); }
+        expect(db.prepare('SELECT count(*) AS n FROM users').get()?.n).toBe(1);
+        expect(db.prepare('SELECT request_id FROM legacy_receipts WHERE space_id=? AND request_id=?').get(space.id,payment.requestId)).toBeTruthy();
+        expect(db.prepare('SELECT payload FROM excel_imports').get()?.payload).toBe('{"source":"synthetic"}');
+      } finally { db.close(); }
     } finally { await recovery.stop(); }
     expect(readFileSync(backup.path)).toEqual(backupBytes);
-    expect(readFileSync(original)).toEqual(originalBytes);
+    expect(readFileSync(target)).toEqual(originalBytes);
     expect(readdirSync(root).some(name => name.startsWith('.omeumes-incompleto-'))).toBe(false);
-    const reopened = windowsCommand(original, 'Iniciar.cmd', port);
-    try { expect(await get(await ready(reopened), period)).toEqual(before); }
+    const reopened = windowsCommand(target, 'Iniciar.cmd', port);
+    try { expect(await ready(reopened)).toBe(url); expect(inspect(target,period)).toEqual(expected); }
     finally { await reopened.stop(); }
   } finally {
     await server.stop();

@@ -3,9 +3,10 @@ import { mkdtempSync, writeFileSync, readFileSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { migrate, migrations, connect, databasePath } from '../../src/server/storage.mjs';
-import { Repository, persist, type Command, type Fault } from '../../src/modules/finance/infrastructure/repository';
-import { handleGet, handlePost } from '../../src/server/http';
+import { migrateSynthetic as migrate } from '../migrate-synthetic';
+import { migrations, connect, databasePath } from '../../src/server/storage.mjs';
+import { Repository, persist, type Command, type Fault } from '../legacy/repository';
+import { handleGet, handlePost } from '../legacy/http';
 import { examples, writeTestCatalog } from '../fixtures';
 import { activeEvents, balance, completed, pending, previousSavingBalance, realized, type Action, type FinancialAction } from '../../src/modules/finance/domain/engine';
 import type { State } from '../../src/modules/finance/domain/model';
@@ -100,7 +101,7 @@ describe('Ajustes da experimentação em SQLite',()=>{
     act(r,association,'association-2');
     act(r,{type:'void',id:'extra'});
     expect(progress()).toEqual([4000,6000,16000,14000]);
-    expect(month(r.read(P).state).events.find(e=>e.id==='association-2')?.voided).toBe(true);
+    expect(month(r.read(P).state).events.some(e=>e.reverses==='association-2')).toBe(true);
   });
 
   it('grava os dois movimentos entre bancos uma vez e reverte os dois perante falha ou anulação',()=>{
@@ -189,7 +190,7 @@ describe('Migrações e isolamento físico',()=>{
     try{db.exec('BEGIN IMMEDIATE');persist(db,{...state,accounts});db.exec('COMMIT');}finally{db.close();}
     const repository=new Repository(p);
     const before=repository.read(P);
-    expect(migrate(p).version).toBe(4);
+    expect(migrate(p).version).toBe(5);
     const after=repository.read(P);
     expect(after.state.accounts).toEqual(state.accounts);
     expect(after.state.months).toEqual(before.state.months);
@@ -200,7 +201,7 @@ describe('Migrações e isolamento físico',()=>{
     expect(repository.read(P)).toEqual(after);
   });
   it('base nova começa com um mês vazio e só inclui catálogo se fornecido explicitamente',()=>{
-    const p=path();const info=migrate(p);expect(info.version).toBe(4);const r=new Repository(p),before=r.read();
+    const p=path();const info=migrate(p);expect(info.version).toBe(5);const r=new Repository(p),before=r.read();
     expect(before.state.accounts).toEqual([]);expect(before.state.categories).toEqual([]);
     expect(before.state.base).toEqual([]);expect(before.state.reserves).toEqual([]);expect(before.state.recurring).toEqual([]);
     expect(Object.values(before.state.months).every(m=>!m.events.length&&!m.lines.length&&!m.snapshot&&Object.values(m.initials).every(v=>v===null))).toBe(true);
@@ -246,7 +247,7 @@ describe('Comandos duráveis — expectativas independentes',()=>{
   it('observação 55 depois de 100−40 dá −5; compra 10 e correção para 58 deixa 48',()=>{
     const s=examples();month(s).initials[A]=10000;const r=fixture(s);act(r,pay(4000),'buy');act(r,obs(5500),'bank');act(r,pay(1000),'later');
     act(r,{type:'correct',id:'bank',replacement:obs(5800)},'correction');const state=new Repository(r.path).read(P).state;
-    expect(balance(month(state),A)).toBe(4800);expect(month(state).initials[A]).toBe(10000);expect(month(state).events.at(-1)?.reconciliation).toEqual({source:A,calculated:6000,observed:5800});expect(month(state).events[1].replacedBy).toBe('correction');
+    expect(balance(month(state),A)).toBe(4800);expect(month(state).initials[A]).toBe(10000);expect(month(state).events.at(-1)?.reconciliation).toEqual({source:A,calculated:6000,observed:5800});expect(month(state).events.at(-1)?.corrects).toBe('bank');
   });
   it('snapshot 100, atual 120, realizado 40: inicial 100 e falta 80; nomes, arquivo e remoção',()=>{
     const r=fixture();act(r,{type:'snapshot',date:`${P}-03`});const original=r.read(P).state;
@@ -309,7 +310,7 @@ describe('Comandos duráveis — expectativas independentes',()=>{
     const original:FinancialAction=kind==='transfer'?{type:'transfer',source:A,destination:B,amount:5000,date:`${P}-02`}:pay(5000,kind,kind==='save-em'?M:A);
     const replacement:FinancialAction={...original,amount:3000};
     act(r,original,'original');act(r,{type:'correct',id:'original',replacement},'replacement');const s=new Repository(r.path).read(P).state;
-    expect(month(s).events[0].voided).toBe(true);expect(month(s).events[0].replacedBy).toBe('replacement');expect(month(s).events[1].corrects).toBe('original');
+    expect(month(s).events[0].voided).toBeUndefined();expect(month(s).events[1].reverses).toBe('original');expect(month(s).events[2].corrects).toBe('original');
     if(kind==='income'){expect(balance(month(s),A)).toBe(98000);expect(realized(month(s),'income')).toBe(3000);}
     if(kind==='services'){expect(balance(month(s),A)).toBe(92000);expect(realized(month(s),'services')).toBe(3000);}
     if(kind==='save-em'){expect(balance(month(s),M)).toBe(97000);expect(balance(month(s),R)).toBe(33000);}

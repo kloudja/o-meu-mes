@@ -33,6 +33,7 @@ const execute = z.strictObject({
   ...execution.shape,
   lineId: text,
   complete: flag,
+  remaining: flag.exactOptional(),
   total: flag.exactOptional(),
   includedInTotal: text.exactOptional(),
 });
@@ -44,20 +45,21 @@ const reconcile = z.strictObject({
   date: text,
   note: text,
 });
-const replacement = z.discriminatedUnion('type', [execute, transfer, reconcile]);
+const save = z.strictObject({
+  type: z.literal('save'),
+  ...entry,
+  reserveId: text,
+  lineId: text.exactOptional(),
+  complete: flag.exactOptional(),
+});
+const replacement = z.discriminatedUnion('type', [execute, transfer, reconcile, save]);
 const target = z.literal('base').exactOptional();
 const actionSchema = z.discriminatedUnion('type', [
   execute,
   transfer,
   reconcile,
+  save,
   z.strictObject({ type: z.literal('correct'), id: text, replacement }),
-  z.strictObject({
-    type: z.literal('save'),
-    ...entry,
-    reserveId: text,
-    lineId: text.exactOptional(),
-    complete: flag.exactOptional(),
-  }),
   z.strictObject({ type: z.literal('associateSaving'), eventId: text, lineId: text, amount: cents }),
   z.strictObject({
     type: z.literal('recordSuggestedTransfers'),
@@ -110,7 +112,16 @@ const actionSchema = z.discriminatedUnion('type', [
   }),
 ]);
 
-const envelope = z.strictObject({ period: text, requestId: text, revision: cents, action: object });
+const envelope = z.strictObject({
+  period: text,
+  requestId: text,
+  revision: cents,
+  action: object,
+  duplicateConfirmation: z
+    .string()
+    .regex(/^[a-f0-9]{64}$/)
+    .exactOptional(),
+});
 
 function invalid(): never {
   throw new DomainError('INPUT', 'O pedido contém campos inválidos. Reveja o formulário.');
@@ -146,9 +157,9 @@ export function parseAction(value: unknown): Action {
 export function parseCommand(value: unknown): Command {
   const result = envelope.safeParse(value);
   if (!result.success || !hasOwnMembers(value, result.data)) invalid();
-  const { period, requestId, revision, action } = result.data;
+  const { period, requestId, revision, action, duplicateConfirmation } = result.data;
   validPeriod(period);
   validId(requestId);
   if (requestId.length > 200 || revision < 0) invalid();
-  return { period, requestId, revision, action: parseAction(action) };
+  return { period, requestId, revision, action: parseAction(action), duplicateConfirmation };
 }

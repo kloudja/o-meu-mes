@@ -3,7 +3,14 @@ name: CI
 on:
   push:
     branches: [master]
+  pull_request:
+    branches: [master]
   workflow_dispatch:
+    inputs:
+      verify_failure_gate:
+        description: 'Deliberately fail Linux CI to verify that production is left untouched'
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -12,7 +19,7 @@ jobs:
   checks:
     name: Build and test
     runs-on: windows-2025
-    timeout-minutes: 20
+    timeout-minutes: 40
     env:
       NEXT_TELEMETRY_DISABLED: '1'
 
@@ -53,3 +60,114 @@ jobs:
 
       - name: Browser tests
         run: pnpm test:e2e
+
+  linux:
+    name: Linux build and test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      NEXT_TELEMETRY_DISABLED: '1'
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@73e46992e05b19abd31f2f3c20e0e7370d762115 # v6
+        with:
+          standalone: true
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24.22.1'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm quality
+      - run: pnpm build
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm test:integration
+      - run: pnpm exec playwright install --with-deps chromium
+      - run: pnpm test:e2e
+      - name: Check deployment shell scripts
+        run: |
+          for script in deploy/*.sh; do bash -n "$script"; done
+      - name: Deliberate failure gate drill
+        if: github.event_name == 'workflow_dispatch' && inputs.verify_failure_gate
+        run: |
+          echo 'Requested CI failure drill. Image/deploy jobs must be skipped.'
+          exit 1
+
+  image:
+    name: Package and exercise exact Linux image
+    needs: [checks, linux]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    outputs:
+      image_id: ${{ steps.package.outputs.image_id }}
+      archive_sha: ${{ steps.package.outputs.archive_sha }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
+        with:
+          node-version: '24.22.1'
+      - name: Build release (native Linux amd64 Argon2 and SQLite)
+        run: docker build --platform linux/amd64 --tag "omeumes:$GITHUB_SHA" .
+      - name: Persistence, readiness, background jobs and recovery smoke
+        run: node tests/deployment/image-smoke.mjs "omeumes:$GITHUB_SHA"
+      - name: Save the image that passed (no rebuild during deployment)
+        id: package
+        run: |
+          docker save "omeumes:$GITHUB_SHA" | gzip -1 > image.tar.gz
+          echo "image_id=$(docker image inspect "omeumes:$GITHUB_SHA" --format '{{.Id}}')" >> "$GITHUB_OUTPUT"
+          echo "archive_sha=$(sha256sum image.tar.gz | cut -d' ' -f1)" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: linux-image-${{ github.sha }}
+          path: image.tar.gz
+          retention-days: 7
+          compression-level: 0
+
+  deploy:
+    name: Deploy production
+    needs: [checks, linux, image]
+    if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://omeumes.pt
+    concurrency:
+      group: omeumes-production
+      cancel-in-progress: false
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: linux-image-${{ github.sha }}
+      - name: Deploy only the current master revision
+        id: current
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/master" --jq .object.sha)
+          if [[ "$head" == "$GITHUB_SHA" ]]; then echo 'deploy=true' >> "$GITHUB_OUTPUT"; fi
+      - name: Stream verified image to the restricted VPS command
+        if: steps.current.outputs.deploy == 'true'
+        env:
+          DEPLOY_KEY: ${{ secrets.VPS_DEPLOY_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VPS_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ vars.VPS_HOST }}
+          DEPLOY_USER: ${{ vars.VPS_USER }}
+          IMAGE_ID: ${{ needs.image.outputs.image_id }}
+          ARCHIVE_SHA: ${{ needs.image.outputs.archive_sha }}
+        run: |
+          set -euo pipefail
+          test -n "$DEPLOY_KEY" && test -n "$KNOWN_HOSTS" && test -n "$DEPLOY_HOST" && test -n "$DEPLOY_USER"
+          install -d -m 0700 ~/.ssh
+          printf '%s\n' "$DEPLOY_KEY" > ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 0600 ~/.ssh/deploy ~/.ssh/known_hosts
+          trap 'rm -f ~/.ssh/deploy' EXIT
+          printf '%s  image.tar.gz\n' "$ARCHIVE_SHA" | sha256sum --check --status
+          ssh -i ~/.ssh/deploy -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "deploy $GITHUB_SHA $IMAGE_ID $ARCHIVE_SHA" < image.tar.gz

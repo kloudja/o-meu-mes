@@ -1,6 +1,13 @@
 import { DatabaseSync } from 'node:sqlite';
-import { mkdirSync, existsSync, readFileSync } from 'node:fs';
+import { mkdirSync, existsSync } from 'node:fs';
 import { dirname, isAbsolute, resolve } from 'node:path';
+import { allowTransition } from './transition.mjs';
+import { spaceSchema } from '../modules/spaces/schema.mjs';
+import { mu3Schema } from '../modules/spaces/schema-mu3.mjs';
+import { mu4Schema } from '../modules/spaces/schema-mu4.mjs';
+import { mu5Schema } from '../modules/privacy/schema.mjs';
+import { guardRegistry } from './recovery-registry.mjs';
+import { identitySchema } from '../modules/identity/schema.mjs';
 
 export const APP_ID=1330464083;
 const safe='BETWEEN -9007199254740991 AND 9007199254740991';
@@ -37,7 +44,8 @@ SELECT 'monthly-income:' || id, id, NULL, NULL, json_extract(payload, '$.baseIni
     'kind', 'income', 'accountId', id, 'categoryId', '')
 FROM accounts WHERE json_type(payload, '$.baseInitial') = 'integer' AND json_extract(payload, '$.baseInitial') > 0;
 UPDATE accounts SET payload = json_remove(payload, '$.baseInitial') WHERE json_type(payload, '$.baseInitial') IS NOT NULL;
-UPDATE meta SET revision = revision + 1 WHERE id = 1 AND changes() > 0;`
+UPDATE meta SET revision = revision + 1 WHERE id = 1 AND changes() > 0;`,
+identitySchema, spaceSchema, mu3Schema, mu4Schema, mu5Schema
 ];
 
 export function databasePath(){
@@ -54,49 +62,53 @@ export function connect(path,timeout=1500){
   if(!existsSync(path))throw new Error('Database unavailable; use the migration/start script');
   const db=new DatabaseSync(path,{timeout,enableForeignKeyConstraints:true,enableDoubleQuotedStringLiterals:false});
   try{
-    db.exec('PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;');
+    db.exec('PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;');
     const value=p=>Object.values(db.prepare(`PRAGMA ${p}`).get())[0];
     if(value('application_id')!==APP_ID||value('user_version')<1||value('user_version')>migrations.length)throw new Error('Incompatible database schema');
     if(value('foreign_keys')!==1||value('synchronous')!==2||value('journal_mode')!=='wal')throw new Error('SQLite guarantees unavailable');
+    if(value('user_version')>=9)guardRegistry(db,path);
     return db;
   }catch(e){db.close();throw e;}
 }
 
-export function migrate(path,steps=migrations){
+export function migrate(path,steps=migrations,authorized=false,recovery=false){
+  allowTransition(path,authorized,steps.length,recovery);
   mkdirSync(dirname(path),{recursive:true});
   const db=new DatabaseSync(path,{timeout:1500});
   try{
-    db.exec('PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL;');
+    db.exec('PRAGMA foreign_keys=ON; PRAGMA synchronous=FULL; PRAGMA secure_delete=ON;');
     const val=p=>Object.values(db.prepare(`PRAGMA ${p}`).get())[0];
     const version=val('user_version'),app=val('application_id');
     const tables=db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT LIKE 'sqlite_%'").all();
     if((app!==0&&app!==APP_ID)||(app===0&&(version!==0||tables.length))||version>steps.length)throw new Error('Incompatible database schema');
+    // SQLite requires foreign keys suspended while rebuilding a referenced table.
+    // The whole migration still checks every reference before committing.
+    if(version<steps.length&&steps.length>=7)db.exec('PRAGMA foreign_keys=OFF;');
     db.exec('PRAGMA journal_mode=WAL; BEGIN IMMEDIATE;');
     try{
       // Re-read inside the lock: concurrent starters must never reapply a migration.
       const lockedVersion=val('user_version');
+      if(lockedVersion>0 && lockedVersion<6 && steps.length>=6)throw new Error('A origem financeira exige uma atribuição explícita num destino distinto.');
+      if(lockedVersion===6&&steps.length>=7&&!authorized)throw new Error('Transição MU3 por autorizar.');
+      if(lockedVersion===7&&steps.length>=8&&!authorized)throw new Error('Transição MU4 por autorizar.');
+      if(lockedVersion===8&&steps.length>=9&&!authorized)throw new Error('Transição MU5 por autorizar.');
       for(let i=lockedVersion;i<steps.length;i++){db.exec(steps[i]);db.exec(`PRAGMA user_version=${i+1}`);}
       db.exec(`PRAGMA application_id=${APP_ID};`);
-      if(lockedVersion===0&&!db.prepare('SELECT id FROM accounts LIMIT 1').get()){
-        const localCatalog=resolve(dirname(path),'catalog.local.json');
-        const catalog=existsSync(localCatalog)?JSON.parse(readFileSync(localCatalog,'utf8')):{accounts:[],categories:[]};
-        for(const a of catalog.accounts){db.prepare('INSERT INTO accounts VALUES(?,?)').run(a.id,JSON.stringify(a));db.prepare('INSERT INTO origins VALUES(?,?,NULL)').run(`a:${a.id}`,a.id);}
-        for(const c of catalog.categories)db.prepare('INSERT INTO categories VALUES(?,?)').run(c.id,JSON.stringify(c));
-        const parts=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Lisbon',year:'numeric',month:'2-digit'}).formatToParts(new Date());
-        const period=`${parts.find(x=>x.type==='year').value}-${parts.find(x=>x.type==='month').value}`;
-        db.prepare('INSERT INTO months VALUES(?)').run(period);
-        for(const a of catalog.accounts)db.prepare('INSERT INTO initials VALUES(?,?,NULL)').run(period,`a:${a.id}`);
-      }
       const requiredTables=['meta','accounts','categories','reserves','origins','base_lines','recurring','months','lines','initials','snapshots','events','effects','allocations','observations','occurrences','receipts'];
       if(steps.length>=3)requiredTables.push('excel_imports');
+      if(steps.length>=5)requiredTables.push('identity_control','users','credentials','documents','acceptances','sessions','recovery_codes','challenges','mail_jobs','auth_limits');
+      if(steps.length>=6)requiredTables.push('spaces','memberships','legacy_assignment','legacy_receipts');
+      if(steps.length>=7)requiredTables.push('finance_versions');
+      if(steps.length>=8)requiredTables.push('space_creations','space_invites','ownership_transfers');
       for(const table of requiredTables){
         db.prepare(`SELECT * FROM ${table} LIMIT 0`).all();
       }
-      if(db.prepare('SELECT format FROM meta WHERE id=1').get()?.format!==1)throw new Error('Incompatible database format');
+      if(steps.length<6&&db.prepare('SELECT format FROM meta WHERE id=1').get()?.format!==1)throw new Error('Incompatible database format');
       if(db.prepare('PRAGMA foreign_key_check').all().length)throw new Error('Invalid database references');
       if(db.prepare('PRAGMA quick_check').get().quick_check!=='ok')throw new Error('Invalid database integrity');
       db.exec('COMMIT;');
     }catch(e){db.exec('ROLLBACK');throw e;}
+    db.exec('PRAGMA foreign_keys=ON;');
     if(db.prepare('PRAGMA foreign_key_check').all().length)throw new Error('Invalid database references');
     return {sqlite:db.prepare('SELECT sqlite_version() AS version').get().version,version:val('user_version')};
   }finally{db.close();}

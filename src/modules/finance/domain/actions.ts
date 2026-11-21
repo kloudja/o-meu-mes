@@ -2,16 +2,15 @@ import { type State, type Line, type Recurring } from './model';
 import { type TransferRoute } from './funding';
 
 type MovementEntry = {amount:number;date:string;source:string;initials?:Record<string,number>;complete?:boolean};
-export type Execution = MovementEntry & {type:'execute';lineId:string;complete:boolean;total?:boolean;description?:string;includedInTotal?:string;reserveAfter?:number};
+export type Execution = MovementEntry & {type:'execute';lineId:string;complete:boolean;remaining?:boolean;total?:boolean;description?:string;includedInTotal?:string;reserveAfter?:number};
 export type SavingEntry = MovementEntry & {type:'save';reserveId:string;lineId?:string};
-export type FinancialAction = Execution
+export type FinancialAction = Execution | SavingEntry
  | {type:'reconcile';source:string;amount:number;date:string;note:string}
  | {type:'transfer';source:string;destination:string;amount:number;date:string;initials?:Record<string,number>};
 export type Action = FinancialAction
  | {type:'month';period:string} | {type:'snapshot';date:string}
  | {type:'recordSuggestedTransfers';date:string;period:string;routes:TransferRoute[]}
  | {type:'line';line:Line;target?:'base';execution?:Pick<Execution,'amount'|'date'|'source'|'initials'|'description'|'reserveAfter'>} | {type:'removeLine';id:string;target?:'base'}
- | SavingEntry
  | {type:'associateSaving';lineId:string;eventId:string;amount:number}
  | {type:'initial';source:string;amount:number} | {type:'void';id:string}
  | {type:'correct';id:string;replacement:FinancialAction}

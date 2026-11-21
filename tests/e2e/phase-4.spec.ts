@@ -1,6 +1,6 @@
 import { goToScreen } from './navigation';
-import { expect, test } from './application';
-import type { Page, APIRequestContext } from '@playwright/test';
+import { expect, test, type FinanceApi } from './application';
+import type { Page } from '@playwright/test';
 import type { Action } from '../../src/modules/finance/domain/engine';
 import type { State } from '../../src/modules/finance/domain/model';
 
@@ -145,23 +145,23 @@ for(const width of [1366,360,390])test.describe(`percursos renderizados a ${widt
   });
 });
 
-async function read(api:APIRequestContext,period?:string){
-  const response=await api.get('/api/state'+(period?`?period=${period}`:''));
+async function read(api:FinanceApi,period?:string){
+  const response=await api.read(period);
   expect(response.ok()).toBe(true);
   return await response.json() as {revision:number;state:State};
 }
-async function send(api:APIRequestContext,action:Action){
+async function send(api:FinanceApi,action:Action){
   const before=await read(api);
-  const response=await api.post('/api/state',{data:{period:before.state.selected,revision:before.revision,requestId:crypto.randomUUID(),action}});
+  const response=await api.command({period:before.state.selected,revision:before.revision,requestId:crypto.randomUUID(),action});
   expect(response.ok(),await response.text()).toBe(true);
 }
 
-test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({page,request})=>{
+test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({page,finance})=>{
 
   const period='9995-02';
   const base={id:'phase4-base',name:'Seguro de teste',kind:'expense' as const,accountId:'act-r',categoryId:'cat-seguros',plan:8500};
-  await send(request,{type:'line',target:'base',line:base});
-  await send(request,{type:'reserve',reserve:{id:'phase4-reserve',name:'Reserva de teste',accountId:'moey-r'}});
+  await send(finance,{type:'line',target:'base',line:base});
+  await send(finance,{type:'reserve',reserve:{id:'phase4-reserve',name:'Reserva de teste',accountId:'moey-r'}});
   await page.goto('/');
   await expect(page.locator('.app-shell')).toHaveAttribute('data-ready','true');
   await goToScreen(page, 'Pagamentos recorrentes');
@@ -179,7 +179,7 @@ test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({pa
     await expect(dialog(page)).toHaveCount(0);
   }
   await openMonth(page,period,true);
-  const opened=(await read(request,period)).state.months[period];
+  const opened=(await read(finance,period)).state.months[period];
   expect(opened.events).toEqual([]);
   expect(Object.values(opened.initials).every(v=>v===null)).toBe(true);
   await goToScreen(page, 'Contas');
@@ -211,7 +211,7 @@ test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({pa
   await goToScreen(page,'Mês');
   await page.getByRole('button',{name:'Guardar plano inicial'}).click();
   await expect(page.getByRole('button',{name:'Referência preservada'})).toBeDisabled();
-  const original=(await read(request,period)).state.months[period];
+  const original=(await read(finance,period)).state.months[period];
   expect(original.lines.filter(l=>l.name===longName)).toHaveLength(1);
   expect(original.events).toEqual([]);
   expect(original.initials['a:act-r']).toBe(30000);
@@ -220,7 +220,7 @@ test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({pa
   await goToScreen(page, 'Modelo Base');
   await page.getByTestId('line-phase4-base').getByRole('button',{name:'Editar',exact:true}).click();
   await dialog(page).getByLabel('Montante habitual (€) · opcional').fill('99');
-  await send(request,{type:'line',target:'base',line:{...base,plan:9000}});
+  await send(finance,{type:'line',target:'base',line:{...base,plan:9000}});
   await expect(page.getByTestId('line-phase4-base')).toContainText('90,00',{timeout:8000});
   await confirm(page).click();
   await expect(dialog(page).getByRole('alert')).toContainText('Os dados mudaram');
@@ -247,7 +247,7 @@ test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({pa
   await goToScreen(page, 'Pagamentos recorrentes');
   await expect(annual).toContainText('Adicionado ao plano');
   await expect(annual).toContainText('28/02/9995');
-  expect((await read(request,period)).state.months[period]).toEqual(original);
+  expect((await read(finance,period)).state.months[period]).toEqual(original);
 
   const definition=page.locator('.definition-row').filter({hasText:longName});
   await definition.getByRole('button',{name:'Editar',exact:true}).click();

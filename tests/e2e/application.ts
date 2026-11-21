@@ -1,80 +1,163 @@
-import { spawn } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
-import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { test as base, type Page } from '@playwright/test';
-import { connect, migrate } from '../../src/server/storage.mjs';
-import { persist } from '../../src/modules/finance/infrastructure/repository';
-import { examples, writeTestCatalog } from '../fixtures';
+import { randomUUID } from 'node:crypto';
+import type { APIRequestContext, BrowserContext, Page } from '@playwright/test';
+import type { Action } from '../../src/modules/finance/domain/actions';
+import type { Command, Confirmed } from '../../src/modules/finance/contracts/command';
+import { examples } from '../fixtures';
+import { type Application, expect, syntheticCredentials, test as base } from './identity-application';
 
-type Application = { url: string; path: string };
+type Credentials = ReturnType<typeof syntheticCredentials>;
+
+export async function registerOwner(api: APIRequestContext, app: Application, credentials: Credentials) {
+  const identity = (data: Record<string, unknown>) =>
+    api.post(app.url + '/api/identity', {
+      headers: { Origin: app.url },
+      data,
+    });
+  expect((await identity({ action: 'register', ...credentials })).ok()).toBe(true);
+  const token = new URL(await app.emailLink(credentials.email, 'verify')).hash.slice(8);
+  expect((await identity({ action: 'verify', token, password: credentials.password })).ok()).toBe(true);
+  await loginOwner(api, app.url, credentials);
+  const { account } = await (await api.get(app.url + '/api/identity')).json();
+  expect(account.verified).toBe(true);
+  return account.id as string;
+}
+
+async function loginOwner(api: APIRequestContext, origin: string, { email, password }: Credentials) {
+  const login = await api.post(origin + '/api/identity', {
+    headers: { Origin: origin },
+    data: { action: 'login', email, password },
+  });
+  expect(login.ok()).toBe(true);
+}
+
+export class FinanceApi {
+  constructor(
+    readonly api: APIRequestContext,
+    readonly origin: string,
+    readonly accountId: string,
+    readonly spaceId: string,
+  ) {}
+
+  private scoped(path: string, period?: string) {
+    const url = new URL(path, this.origin);
+    url.searchParams.set('spaceId', this.spaceId);
+    if (period) url.searchParams.set('period', period);
+    return url.href;
+  }
+
+  get headers() {
+    return { 'X-Account': this.accountId, Origin: this.origin };
+  }
+
+  read(period?: string) {
+    return this.api.get(this.scoped('/api/state', period), { headers: this.headers });
+  }
+
+  reference(operation: 'prepare' | 'resolve' | 'ack', requestId: string, period: string) {
+    return this.api.post(this.scoped('/api/requests'), {
+      headers: this.headers,
+      data: { operation, requestId, period },
+    });
+  }
+
+  async command(command: Command) {
+    const response = await this.api.post(this.scoped('/api/state'), { headers: this.headers, data: command });
+    if (response.ok()) {
+      const acknowledged = await this.reference('ack', command.requestId, command.period);
+      expect(acknowledged.ok(), await acknowledged.text()).toBe(true);
+    }
+    return response;
+  }
+
+  async setup(actions: Action[], period: string) {
+    const first = await this.read();
+    expect(first.ok(), await first.text()).toBe(true);
+    let state: Confirmed = await first.json();
+    for (const action of actions) {
+      const response = await this.command({
+        period: action.type === 'month' ? state.state.selected || action.period : period,
+        revision: state.revision,
+        action,
+        requestId: randomUUID(),
+      });
+      expect(response.ok(), await response.text()).toBe(true);
+      state = await response.json();
+    }
+    return state;
+  }
+}
+
+export async function createTestSpace(api: APIRequestContext, origin: string, userId: string, name: string) {
+  const response = await api.post(origin + '/api/spaces', {
+    headers: { Origin: origin, 'X-Account': userId },
+    data: { name, requestId: randomUUID() },
+  });
+  expect(response.ok(), await response.text()).toBe(true);
+  const { space } = await response.json();
+  expect(space.currency).toBe('EUR');
+  return new FinanceApi(api, origin, userId, space.id);
+}
 
 export const test = base.extend<{
-  application: Application;
-  openExamples: (page: Page) => Promise<void>;
-  showLocalData: boolean;
+  credentials: Credentials;
+  finance: FinanceApi;
+  openExamples(page: Page): Promise<void>;
+  loginSibling(context: BrowserContext): Promise<void>;
 }>({
-  showLocalData: [false, { option: true }],
-  application: async ({ showLocalData }, use) => {
-    const directory = mkdtempSync(join(tmpdir(), 'omeumes-test-browser-'));
-    const path = join(directory, 'browser.sqlite');
-    writeTestCatalog(directory);
-    migrate(path);
-    const probe = createServer();
-    await new Promise<void>((resolve, reject) => {
-      probe.once('error', reject);
-      probe.listen(0, '127.0.0.1', resolve);
-    });
-    const { port } = probe.address() as { port: number };
-    await new Promise<void>(resolve => probe.close(() => resolve()));
-    const url = `http://127.0.0.1:${port}`;
-    const server = spawn(process.execPath, ['node_modules/next/dist/bin/next', 'start', '--hostname', '127.0.0.1', '--port', String(port)], {
-      env: { ...process.env, OMEUMES_DB_PATH: path, OMEUMES_TEST_MODE: '1', OMEUMES_SHOW_LOCAL_DATA: showLocalData ? '1' : '0', NEXT_TELEMETRY_DISABLED: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-    });
-    let output = '';
-    server.stdout.on('data', chunk => { output += chunk; });
-    server.stderr.on('data', chunk => { output += chunk; });
-    let exited = false;
-    const stopped = new Promise<void>(resolve => {
-      server.once('close', () => { exited = true; resolve(); });
-      server.once('error', error => { output += error.message; });
-    });
+  credentials: async ({}, use) => {
+    await use(syntheticCredentials());
+  },
+  finance: async ({ playwright, application, credentials }, use) => {
+    const api = await playwright.request.newContext({ baseURL: application.url });
     try {
-      for (let attempt = 0; attempt < 80 && !exited; attempt++) {
-        const response = await fetch(url + '/api/state', { signal: AbortSignal.timeout(500) }).catch(() => null);
-        if (response?.ok) {
-          await use({ url, path });
-          return;
-        }
-        await new Promise(resolve => setTimeout(resolve, 100));
-      }
-      throw new Error(`Aplicação de teste indisponível em ${path}\n${output}`);
+      const owner = await registerOwner(api, application, credentials);
+      const finance = await createTestSpace(api, application.url, owner, 'Finanças de ensaio');
+      const { accounts, categories } = examples();
+      await finance.setup(
+        [
+          { type: 'month', period: '2026-10' },
+          ...accounts.map((account) => ({ type: 'account', account }) as const),
+          ...categories.map((category) => ({ type: 'category', category }) as const),
+        ],
+        '2026-10',
+      );
+      await use(finance);
     } finally {
-      if (!exited) server.kill();
-      await stopped;
+      await api.dispose();
     }
   },
-  baseURL: async ({ application }, use) => { await use(application.url); },
-  request: async ({ playwright, baseURL }, use) => {
-    const api = await playwright.request.newContext({ baseURL, extraHTTPHeaders: { Origin: baseURL! } });
-    try { await use(api); } finally { await api.dispose(); }
+  storageState: async ({ finance }, use) => {
+    await use(await finance.api.storageState());
   },
-  openExamples: async ({ application }, use) => {
-    await use(async page => {
-      const db = connect(application.path);
-      try {
-        db.exec('BEGIN IMMEDIATE');
-        // Replace the empty month created by migrate in this test's own database.
-        db.exec('DELETE FROM initials; DELETE FROM months;');
-        persist(db, examples());
-        db.exec('COMMIT');
-      } finally { db.close(); }
+  loginSibling: async ({ application, credentials }, use) => {
+    await use(async (context) => {
+      // Playwright can carry the fixture's storageState into an explicitly created context.
+      await context.clearCookies();
+      await loginOwner(context.request, application.url, credentials);
+    });
+  },
+  openExamples: async ({ finance }, use) => {
+    await use(async (page) => {
+      const s = examples();
+      await finance.setup(
+        [
+          ...s.reserves.map((reserve) => ({ type: 'reserve', reserve }) as const),
+          ...s.base.map((line) => ({ type: 'line', target: 'base', line }) as const),
+          ...s.recurring.map((definition) => ({ type: 'recurring', definition }) as const),
+          { type: 'month', period: s.selected },
+        ],
+        '2026-10',
+      );
+      const initials: Action[] = [];
+      for (const [source, amount] of Object.entries(s.months[s.selected].initials)) {
+        if (amount !== null) initials.push({ type: 'initial', source, amount });
+      }
+      await finance.setup(initials, s.selected);
       await page.goto('/');
       await page.locator('.app-shell[data-ready="true"]').waitFor();
+      await expect(page.getByLabel('Mês selecionado')).toHaveValue(s.selected);
     });
   },
 });
 
-export { expect } from '@playwright/test';
+export { expect };

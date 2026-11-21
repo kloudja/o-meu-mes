@@ -45,6 +45,8 @@ references/private/
 *.xls
 *.xlsb
 *.log
+*.age
+/docs/DEPLOYMENT_REVIEW.local.md
 
 # Capturas e material interno com dados ou configuração deste PC
 /docs/capturas/

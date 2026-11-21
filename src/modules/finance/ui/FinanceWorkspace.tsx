@@ -1,11 +1,12 @@
 'use client';
 import { useEffect, useLayoutEffect, useRef, useState, type FormEvent } from 'react';
-import type { usePersistentStore } from '@/modules/finance/client/usePersistentStore';
+import { DuplicateConfirmationRequired, type usePersistentStore } from '@/modules/finance/client/usePersistentStore';
 import { newRequestId } from '@/modules/finance/client/requestId';
-import type { Month, State } from '@/modules/finance/domain/model';
+import type { Event, Month, State } from '@/modules/finance/domain/model';
 import { DomainError } from '../domain/validation';
-import { accumulatedTotal, activeEvents, balance, canDeleteAccount, completed, defaultReserveInitial, effects, freeSaving, precedingMonth, previousSavingBalance, reserveUse, savingGoals, savingProgress, totalUnallocated, initialPlan, linkableExpenses, obligations, pending, planTotal, realized } from '../domain/projections';
-import { type Action } from '../domain/actions';
+import { accumulatedTotal, activeEvents, balance, canDeleteAccount, completed, defaultReserveInitial, effects, freeSaving, previousSavingBalance, reserveUse, savingGoals, savingProgress, totalUnallocated, initialPlan, linkableExpenses, obligations, pending, planTotal, realized } from '../domain/projections';
+import { type Action, type FinancialAction } from '../domain/actions';
+import type { DuplicateNotice } from '../contracts/command';
 import { aid, rid, type Account, type Line, type Kind, type Recurring, type Reserve } from '@/modules/finance/domain/model';
 import { calendarDate, dateLabel, inputMoney, money, monthLabel, parseMoney } from '@/modules/finance/domain/money';
 import { Dialog } from '../../../shared/ui/Dialog';
@@ -14,7 +15,8 @@ import { Icon } from '../../../shared/ui/Icon';
 import { InitialBalances } from './InitialBalances';
 import { AccountFunding } from './AccountFunding';
 import { RecurringPayments } from './RecurringPayments';
-import { LocalFiles } from './LocalFiles';
+import type { FinanceModal as Modal, FinanceMemory } from '../client/draft';
+import { previousPeriod } from '../domain/projections';
 import { MoneyInput } from './MoneyInput';
 import { MovementList } from './MovementList';
 import { ActiveMovementFilters, defaultMovementView, MovementFilters } from './MovementFilters';
@@ -27,27 +29,32 @@ import { navigation, type Screen, screenDescriptions, baseKinds, kindLabel, mont
 import { accountColor, accountColors, isLongAmount } from './amount-display';
 import { PaymentFeedback } from './PaymentFeedback';
 import { MonthOverview } from './MonthOverview';
-import { MovementHistory } from './MovementHistory';
+import { MovementHistory, HistoryDisclosure } from './MovementHistory';
+import { DuplicateReview, OutdatedNotice } from './MovementNotices';
 import { WorkspaceNavigation } from './WorkspaceNavigation';
 import { Tabs } from '../../../shared/ui/Tabs';
 import { EmptySearch } from '../../../shared/ui/EmptySearch';
 import { StatusMessage, ErrorMessage } from '../../../shared/ui/Messages';
 
-type Modal={kind:string;id?:string;target?:'base';source?:string;reserveId?:string;otherBank?:boolean;optionalGoal?:boolean;fromExpenseRemainder?:boolean;requestId:string;revision?:number;returnTo?:string;eventId?:string};
 const totalEffect=(adjustment:number)=>adjustment===0?'Sem alteração ao saldo':adjustment>0
   ?`Débito adicional de ${money(adjustment)}`:`Crédito de ${money(-adjustment)}`;
 type PaymentReceipt={period:string;lineId:string;eventId:string};
 type RemainderSaving={reserve:Reserve;amount:number;source:string;date:string;lineId:string};
 type Store=ReturnType<typeof usePersistentStore>&{state:State};
-export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;recovery:boolean;showLocalData:boolean}){
+export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{store:Store;space:string;memory:FinanceMemory;readOnly:boolean;shared:boolean;sharing:React.ReactNode}){
   const {state:s,dispatch,busy,uncertain}=store;
+  const restored=!readOnly&&memory.draft?.space===space && memory.draft.period===s.selected?memory.draft:undefined;
   const [ready,setReady]=useState(false);
   useEffect(()=>setReady(true),[]);
-  const [screen,setScreen]=useState<Screen>('month'),[tab,setTab]=useState<Kind>('expense');
+  const [screen,setScreen]=useState<Screen>(memory.screen??'month'),[tab,setTab]=useState<Kind>('expense');
   const [expandedMetric,setExpandedMetric]=useState<'balance'|'expenses'|'savings'|null>(null);
   const [planView,setPlanView]=useState(defaultMovementView);
   const pendingOnly=planView.status==='pending';
-  const [modal,setModal]=useState<Modal|null>(null),[values,setValues]=useState<Record<string,string>>({}),[error,setError]=useState(''),[initialErrorSource,setInitialErrorSource]=useState(''),[globalError,setGlobalError]=useState(''),[notice,setNotice]=useState(''),[search,setSearch]=useState('');
+  const [modal,setModal]=useState<Modal|null>(restored?.modal??null),[values,setValues]=useState<Record<string,string>>(restored?.values??{}),[error,setError]=useState(''),[initialErrorSource,setInitialErrorSource]=useState(''),[globalError,setGlobalError]=useState(''),[notice,setNotice]=useState(''),[search,setSearch]=useState('');
+  useLayoutEffect(()=>{
+    memory.space=space;memory.period=s.selected;memory.screen=screen;
+    memory.draft=modal&&!busy&&!uncertain?{space,period:s.selected,modal,values}:undefined;
+  },[space,memory,s.selected,screen,modal,values,busy,uncertain]);
   const [errorCode,setErrorCode]=useState('');
   const [errorAttempt,setErrorAttempt]=useState(0);
   const [catalogSearch,setCatalogSearch]=useState({account:'',category:''});
@@ -58,6 +65,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
   const showReceipt=(confirmation:PaymentReceipt)=>setReceipt({...confirmation,expiresAt:Date.now()+10000});
   const shownReceipt=useRef<typeof receipt>(null);
   const [conflict,setConflict]=useState(false);
+  const [duplicate,setDuplicate]=useState<{notice:DuplicateNotice;action:Action;text:string;revision?:number}|null>(null);
   const [menu,setMenu]=useState(false);
   const menuButton=useRef<HTMLButtonElement>(null);
   const menuPanel=useRef<HTMLDivElement>(null);
@@ -91,7 +99,8 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
   const monthKinds:Kind[]=['expense','income','saving'];
   if(hasInvestment||tab==='investment')monthKinds.push('investment');
   const modelKinds=s.base.some(l=>l.kind==='investment')?[...baseKinds,'investment' as const]:baseKinds;
-  const [fundingOpen,setFundingOpen]=useState(false);
+  const [fundingOpen,showFunding]=useState(memory.funding?.space===space&&memory.funding.period===s.selected);
+  function setFundingOpen(open:boolean){if(!open)memory.funding=undefined;showFunding(open);}
   const selectedLine=modal?.id&&['line','detail','payment'].includes(modal.kind)?(modal.target==='base'?s.base:m.lines).find(l=>l.id===modal.id):undefined;
   const nameOf=(id:string)=>s.accounts.find(a=>a.id===id)?.name??'Conta por indicar';
   const reserveLabel=(r:Reserve)=>{
@@ -112,10 +121,11 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
     const detail=document.getElementById(`detail-${receipt.lineId}`);
     if(!detail)return;
     shownReceipt.current=receipt;
+    if(menu||menuButton.current===document.activeElement||menuPanel.current?.contains(document.activeElement))return;
     const confirmation=document.getElementById(`receipt-${receipt.lineId}`);
     if(!detail.closest('.movement')?.querySelector('[data-pay]'))detail.focus({preventScroll:true});
     confirmation?.scrollIntoView({block:'nearest'});
-  },[receipt,modal,busy,m.period]);
+  },[receipt,modal,busy,m.period,menu]);
   useLayoutEffect(()=>{
     if(modal||busy||uncertain||!pendingSavingFocus.current)return;
     const detail=document.getElementById(`detail-${pendingSavingFocus.current}`);
@@ -187,8 +197,48 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
   }
   const dateDefault=()=>calendarDate().startsWith(s.selected)?calendarDate():`${s.selected}-01`;
   const notify=(text:string)=>{setNotice(text);setGlobalError('');};
-  async function run(action:Action,text:string,requestId?:string,revision?:number){await dispatch(action,requestId,revision);notify(text);}
+  async function run(action:Action,text:string,requestId?:string,revision?:number,token?:string){
+    try{const result=await dispatch(action,requestId,revision,token);notify(text);return result;}
+    catch(e){
+      if(e instanceof DuplicateConfirmationRequired)setDuplicate({notice:e.notice,action,text,revision});
+      throw e;
+    }
+  }
+  async function confirmDuplicate(){
+    if(!duplicate||busy||uncertain)return;
+    const requestId=newRequestId();
+    try{
+      const result=await run(duplicate.action,duplicate.text,requestId,duplicate.revision,duplicate.notice.token);
+      const action=duplicate.action;
+      if(action.type==='execute'&&m.lines.some(l=>l.id===action.lineId&&l.kind==='expense'))
+        showReceipt({period:m.period,lineId:action.lineId,eventId:result.resultId??requestId});
+      setDuplicate(null);close();
+    }catch(e){
+      if(e instanceof DuplicateConfirmationRequired)return;
+      setDuplicate(null);
+      if(modal)formFailure(e);
+      else if(!reportConflict(e))setGlobalError((e as Error).message);
+    }
+  }
+  function dismissDuplicate(){
+    if(busy)return;
+    setDuplicate(null);
+    if(modal)setModal({...modal,requestId:newRequestId()});
+  }
+  function openCorrection(entry:Event){
+    const deltas=Object.entries(entry.deltas);
+    const funding=entry.saving?.transferId ? m.events.find(e=>e.id===entry.saving!.transferId) : undefined;
+    const source=entry.reconciliation?.source??(funding?Object.entries(funding.deltas):deltas).find(([,n])=>n<0)?.[0]??deltas[0]?.[0]??'';
+    const amount=entry.totalObservation?.observed??entry.reconciliation?.observed??entry.purchaseAmount??
+      (entry.type==='transfer'?(deltas.find(([,n])=>n>0)?.[1]??0):entry.amount+(entry.saving?.extra??0));
+    setValues({source,date:entry.date,amount:inputMoney(amount),note:entry.note,description:entry.description??'',
+      destination:deltas.find(([,n])=>n>0)?.[0]??'',complete:String(!!entry.complete)});
+    setError('');setErrorCode('');
+    setModal({kind:'correct',eventId:entry.id,requestId:newRequestId(),revision:store.revision});
+  }
+  const correction=modal?.kind==='correct'?m.events.find(e=>e.id===modal.eventId):undefined;
   function open(kind:string,options:Partial<Omit<Modal,'kind'|'requestId'|'revision'>>&{kind?:Kind}={}){
+    if(readOnly&&kind!=='detail')return;
     if(busy||uncertain||conflict)return;
     const l=options.id?(options.target==='base'?s.base:m.lines).find(x=>x.id===options.id):undefined;
     let v:Record<string,string>={date:dateDefault(),amount:'',name:'',account:accounts[0]?.id??'',category:'',kind:options.kind??tab,source:sources[0]?.id??'',destination:sources[1]?.id??'',complete:'false',mode:'purchase',period:s.selected,reserve:''};
@@ -249,18 +299,18 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
       setValues(v=>({...v,complete:'true'}));
       return;
     }
-    const requestId=`${m.period}:${l.id}:full:${m.events.length}:${realized(m,l.id)}`;
+    const requestId=newRequestId();
     const confirmation=l.kind==='expense'?{period:m.period,lineId:l.id,eventId:requestId}:null;
     pendingReceipt.current=confirmation;
     try{
-      await run({type:'execute',lineId:l.id,amount,date:dateDefault(),source,complete:true},
+      const result=await run({type:'execute',lineId:l.id,amount,date:dateDefault(),source,complete:true,remaining:true},
         confirmation?'':`${l.name}: ${money(amount)} ${l.kind==='income'?'recebidos':l.kind==='saving'?'reservados':'investidos'}. Gravação local confirmada.`,
         requestId,store.revision);
-      if(confirmation)showReceipt(confirmation);
+      if(confirmation)showReceipt({...confirmation,eventId:result.resultId??confirmation.eventId});
       pendingReceipt.current=null;
     }catch(e){
       if(e instanceof DomainError)pendingReceipt.current=null;
-      if(!reportConflict(e)){open('payment',{id:l.id,returnTo:`pay-${l.id}`});formFailure(e);}
+      if(!(e instanceof DuplicateConfirmationRequired)&&!reportConflict(e)){open('payment',{id:l.id,returnTo:`pay-${l.id}`});formFailure(e);}
     }
   }
   async function submit(e:FormEvent){e.preventDefault();if(!modal||busy||uncertain||conflict)return;try{
@@ -281,11 +331,27 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
         validPeriod(period);
         action={type:'month',period};
         feedback='Mês criado com o Modelo Base e os saldos conhecidos do mês anterior.';
-        if(s.months[period])feedback='Mês reaberto com os dados guardados.';
+        if(store.periods.includes(period))feedback='Mês reaberto com os dados guardados.';
         break;
       }
       case 'initial':action={type:'initial',source:modal.source!,amount:savingsInitial&&!value('amount').trim()?defaultReserveInitial(s,m,modal.source!.slice(2)):amount()};break;
       case 'reconcile':action={type:'reconcile',source:modal.source!,amount:amount(),date:value('date'),note:value('note')};break;
+      case 'correct':{
+        if(!correction)throw new DomainError('EVENT','Registo indisponível.');
+        const details={amount:amount(),date:value('date'),source:value('source')};
+        const complete=value('complete')==='true';
+        let replacement:FinancialAction;
+        if(correction.type==='transfer')replacement={...details,type:'transfer',destination:value('destination')};
+        else if(correction.type==='adjustment')replacement={...details,type:'reconcile',note:value('note')};
+        else if(correction.type==='saving')replacement={...details,type:'save',
+          reserveId:correction.saving?.reserveId??correction.line!.reserveId!,lineId:correction.lineId,complete};
+        else replacement={...details,type:'execute',lineId:correction.lineId!,complete,total:correction.type==='total',
+          description:value('description').trim(),includedInTotal:Object.keys(correction.allocations??{})[0]&&
+            correction.type==='detail'?Object.keys(correction.allocations!)[0]:undefined};
+        action={type:'correct',id:correction.id,replacement};
+        feedback='Correção registada. O histórico conserva o original, a compensação e a substituição.';
+        break;
+      }
       case 'payment':{
         const mode=value('mode'),description=value('description').trim();
         const cents=amount();
@@ -385,8 +451,8 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
       const savingDestination=expenseRemainder>0?remainderReserves.find(reserve=>reserve.id===value('remainderReserve')):undefined;
       pendingRemainderSaving.current=action.type==='execute'&&savingDestination
         ?{reserve:savingDestination,amount:expenseRemainder,source:action.source,date:dateDefault(),lineId:action.lineId}:null;
-      await run(action,confirmation?'':feedback,modal.requestId,modal.revision);
-      if(confirmation)showReceipt(confirmation);
+      const result=await run(action,confirmation?'':feedback,modal.requestId,modal.revision);
+      if(confirmation)showReceipt({...confirmation,eventId:result.resultId??confirmation.eventId});
       pendingReceipt.current=null;
       if(showRemainderSaving())return;
       if(action.type==='reserve'){
@@ -401,7 +467,9 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
     close();
   }catch(e){if(e instanceof DomainError){pendingReceipt.current=null;pendingRemainderSaving.current=null;}formFailure(e);}}
   function formFailure(e:unknown){
+    if(e instanceof DuplicateConfirmationRequired)return;
     if(reportConflict(e))return;
+    if(e instanceof DomainError)setModal(open=>open?{...open,requestId:newRequestId()}:null);
     setError((e as Error).message);
     setErrorAttempt(n=>n+1);
     setErrorCode(e instanceof DomainError?e.code:'');
@@ -412,7 +480,8 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
   }
   async function safe(action:Action,text:string){if(conflict)return;try{await run(action,text,undefined,modal?.revision??store.revision);}catch(e){if(reportConflict(e))return;if(modal){formFailure(e);}else setGlobalError((e as Error).message);}}
   async function retryPending(){try{
-    await store.retry?.();setModal(null);setError('');
+    const committed=await store.retry();setModal(null);setError('');
+    if(!committed){pendingReceipt.current=null;pendingRemainderSaving.current=null;notify('Tentativa encerrada sem efeito. Pode iniciar um novo registo.');return;}
     if(savingFromPlan&&modal?.id)focusSavingDetail(modal.id);
     if(pendingReceipt.current){showReceipt(pendingReceipt.current);pendingReceipt.current=null;notify('');}
     else notify('Gravação local confirmada sem duplicar efeitos.');
@@ -473,7 +542,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
   function lineList(lines:Line[],baseKind?:Kind){return <MovementList key={baseKind??(screen==='plan'?tab:'savings')} lines={lines} month={m} base={!!baseKind}
     view={screen==='plan'?{value:currentView,onChange:setPlanView}:undefined}
     bankOf={line=>s.accounts.find(a=>a.id===line.accountId)?.name} categoryOf={line=>s.categories.find(c=>c.id===line.categoryId)?.name} dateOf={movementDate}
-    empty={<div className="empty"><h3>{baseKind?'Sem definições deste tipo':'Ainda sem movimentos'}</h3><p>{baseKind?'Adicione uma definição para incluir nos novos meses.':'Adicione uma linha ao plano deste mês.'}</p>{baseKind&&<button className="button small" disabled={busy||uncertain||conflict} onClick={()=>open('line',{target:'base',kind:baseKind})}>{({income:'Adicionar receita',expense:'Adicionar despesa',saving:'Adicionar reforço',investment:'Adicionar investimento'})[baseKind]}</button>}</div>}
+    empty={<div className="empty"><h3>{baseKind?'Sem definições deste tipo':'Ainda sem movimentos'}</h3><p>{baseKind?'Adicione uma definição para incluir nos novos meses.':'Adicione uma linha ao plano deste mês.'}</p>{baseKind&&<button className="button small" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('line',{target:'base',kind:baseKind})}>{({income:'Adicionar receita',expense:'Adicionar despesa',saving:'Adicionar reforço',investment:'Adicionar investimento'})[baseKind]}</button>}</div>}
     renderRow={l=>{
       const recent=!baseKind&&receipt?.period===m.period&&receipt.lineId===l.id?receipt.eventId:undefined;
        const payment=recent?recentPayment:undefined;
@@ -484,11 +553,11 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
        const reserve=l.reserveId?s.reserves.find(r=>r.id===l.reserveId):undefined;
        const reserveSpent=saving&&reserve?reserveUse(m,reserve.id).spent:0;
        return <article className={`movement${baseKind?' base-row':''}${wideAmounts?' wide-amounts':''}`} key={l.id} data-testid={`line-${l.id}`}>
-       <div className="movement-name"><button className="name-button" disabled={busy||uncertain||conflict} onClick={()=>open(baseKind?'line':'detail',{id:l.id,target:baseKind?'base':undefined})}>{l.name}</button><div>{accountBadge(l.accountId)}{reserve&&l.kind==='expense'&&<span className="tiny"> · {sourceName(rid(reserve.id))}</span>}{reserve&&l.kind==='saving'&&reserve.accountId!==l.accountId&&<span className="tiny"> → {nameOf(reserve.accountId)}</span>}{date&&<time className="tiny" dateTime={date}> · {dateLabel(date)}</time>}</div>{!baseKind&&<span className={`status ${completed(m,l.id)?'done':realized(m,l.id)>0?'partial':''}`}>{status(l)}{excess>0&&status(l)!=='Excesso'?` · Excesso de ${money(excess)}`:excess>0?` de ${money(excess)}`:''}{addedAfterInitial(l)?' · Adicionado depois do plano inicial':m.snapshot&&initialPlan(m,l)!==l.plan?' · Plano alterado':''}</span>}{reserveSpent>0&&<span className="reserve-used">Usado da poupança · {money(reserveSpent)}</span>}</div>
+       <div className="movement-name"><button className="name-button" disabled={(readOnly&&!!baseKind)||busy||uncertain||conflict} onClick={()=>open(baseKind?'line':'detail',{id:l.id,target:baseKind?'base':undefined})}>{l.name}</button><div>{accountBadge(l.accountId)}{reserve&&l.kind==='expense'&&<span className="tiny"> · {sourceName(rid(reserve.id))}</span>}{reserve&&l.kind==='saving'&&reserve.accountId!==l.accountId&&<span className="tiny"> → {nameOf(reserve.accountId)}</span>}{date&&<time className="tiny" dateTime={date}> · {dateLabel(date)}</time>}</div>{!baseKind&&<span className={`status ${completed(m,l.id)?'done':realized(m,l.id)>0?'partial':''}`}>{status(l)}{excess>0&&status(l)!=='Excesso'?` · Excesso de ${money(excess)}`:excess>0?` de ${money(excess)}`:''}{addedAfterInitial(l)?' · Adicionado depois do plano inicial':m.snapshot&&initialPlan(m,l)!==l.plan?' · Plano alterado':''}</span>}{reserveSpent>0&&<span className="reserve-used">Usado da poupança · {money(reserveSpent)}</span>}</div>
        <div className="amount"><small>{baseKind?'Previsto':'Plano atual'}</small>{money(l.plan)}</div>
        {!baseKind&&<><div className="amount realized"><small>Realizado</small>{money(realized(m,l.id))}</div><div className="amount"><small>Falta</small>{money(pending(m,l))}</div></>}
-       <div className="line-actions">{baseKind?<button className="button small" disabled={busy||uncertain||conflict} onClick={()=>open('line',{id:l.id,target:'base'})}>Editar</button>:<>
-         {canRegisterLine(l)&&<button id={`pay-${l.id}`} data-pay className="button small primary-soft" disabled={busy||uncertain||conflict} onClick={()=>saving?open('save',{id:l.id,reserveId:l.reserveId,returnTo:`detail-${l.id}`}):l.variable?open('payment',{id:l.id}):full(l)}>{l.variable?'Registar':l.kind==='income'?'Receber':saving?'Poupar':l.kind==='investment'?'Investir':'Pagar'}</button>}
+       <div className="line-actions">{baseKind?<button className="button small" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('line',{id:l.id,target:'base'})}>Editar</button>:<>
+         {canRegisterLine(l)&&<button id={`pay-${l.id}`} data-pay className="button small primary-soft" disabled={readOnly||busy||uncertain||conflict} onClick={()=>saving?open('save',{id:l.id,reserveId:l.reserveId,returnTo:`detail-${l.id}`}):l.variable?open('payment',{id:l.id}):full(l)}>{l.variable?'Registar':l.kind==='income'?'Receber':saving?'Poupar':l.kind==='investment'?'Investir':'Pagar'}</button>}
          <button id={`detail-${l.id}`} className="icon-button detail-action" aria-label={`Detalhe de ${l.name}`} disabled={busy||uncertain||conflict} onClick={()=>open('detail',{id:l.id})}><span>Detalhe</span><Icon name="arrow" size={17}/></button>
        </>}</div>
        {payment&&receipt&&<PaymentFeedback key={payment.id} lineId={l.id} text={receiptText(payment)} expiresAt={receipt.expiresAt} onView={()=>open('detail',{id:l.id,eventId:payment.id,returnTo:`detail-${l.id}`})}/>}
@@ -583,6 +652,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
     goal:goals.length?'Editar objetivo do mês':modal?.reserveId?'Quanto quer poupar este mês?':'Adicionar poupança ao mês',
     save:'Poupar',associateSaving:'Associar reforço já registado',
     detail:selectedLine?.name??'Detalhe',transfer:'Transferência própria',link:'Associar a movimento existente',
+    correct:'Corrigir registo',
     recurring:modal?.id?'Editar pagamento recorrente':'Novo pagamento recorrente',account:modal?.id?'Editar conta':'Adicionar conta',
     deleteAccount:'Eliminar conta',
     category:modal?.id?'Editar categoria':'Adicionar categoria',reserve:'Criar poupança'
@@ -590,18 +660,17 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
 
   const openReminders=m.occurrences.filter(o=>o.state==='open').length;
   return <div className="app-shell" data-ready={ready} aria-busy={busy}>
-    <a className="skip-link" href="#main">Saltar para o conteúdo</a>
-    <aside className="sidebar"><div className="brand"><span className="brand-mark"><Icon name="leaf" size={24}/></span><div>O meu mês<small>UM PLANO, MAIS CLAREZA.</small></div></div><div className="nav-caption">O SEU ESPAÇO</div><WorkspaceNavigation screen={screen} openReminders={openReminders} onNavigate={navigate}/>{showLocalData&&<div className="sidebar-bottom"><span className="local-dot"/> Neste computador<p>Aplicação local</p></div>}</aside>
-    <div className="workspace">{(showLocalData||recovery)&&<div className="storage-banner"><span><Icon name="info" size={15}/><strong>{recovery?'Cópia recuperada':'Dados reais'}{showLocalData?' — SQLite':''}</strong>{showLocalData&&<span className="banner-detail">Backup e exportação nas Definições.</span>}</span></div>}
+    <aside className="sidebar"><div className="brand"><span className="brand-mark"><Icon name="leaf" size={24}/></span><div>O meu mês<small>UM PLANO, MAIS CLAREZA.</small></div></div><div className="nav-caption">O SEU ESPAÇO</div><WorkspaceNavigation screen={screen} openReminders={openReminders} onNavigate={navigate}/></aside>
+    <div className="workspace">
     <header className="topbar"><div className="mobile-navigation" onKeyDown={e=>{if(e.key==='Escape'&&menu){e.preventDefault();closeMenu();}}} onBlur={e=>{if(menu&&!e.currentTarget.contains(e.relatedTarget))setMenu(false);}}>
       <button ref={menuButton} className="button small" aria-expanded={menu} aria-controls="mobile-menu" onClick={()=>menu?closeMenu():setMenu(true)}>Menu</button>
       <div id="mobile-menu" ref={menuPanel} hidden={!menu}><WorkspaceNavigation screen={screen} openReminders={openReminders} onNavigate={next=>{navigate(next);closeMenu();}}/></div>
-    </div><span>O meu espaço <span className="muted">/ {navigation.find(n=>n.id===screen)?.label}</span></span><div className="month-controls"><label className="sr-only" htmlFor="month-select">Mês selecionado</label><select id="month-select" disabled={busy||uncertain||conflict} value={s.selected} onChange={e=>safe({type:'month',period:e.target.value},'Mês selecionado.')} aria-label="Mês selecionado">{Object.keys(s.months).sort().map(p=><option key={p} value={p}>{monthLabel(p)}</option>)}</select><button className="button small" disabled={busy||uncertain||conflict} onClick={()=>open('month')}><Icon name="plus" size={16}/>Novo mês</button></div><strong className="mobile-screen-title" aria-hidden="true">{navigation.find(n=>n.id===screen)?.label}</strong></header>
+    </div><span>{shared?'Espaço partilhado':'Espaço privado'}{readOnly?' · Leitor':''} <span className="muted">/ {navigation.find(n=>n.id===screen)?.label}</span></span><div className="month-controls"><label className="sr-only" htmlFor="month-select">Mês selecionado</label><select id="month-select" value={s.selected} onChange={e=>store.selectPeriod(e.target.value)} aria-label="Mês selecionado">{store.periods.map(p=><option key={p} value={p}>{monthLabel(p)}</option>)}</select><button className="button small" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('month')}><Icon name="plus" size={16}/>Novo mês</button></div><strong className="mobile-screen-title" aria-hidden="true">{navigation.find(n=>n.id===screen)?.label}</strong></header>
     <main id="main" tabIndex={-1}>
       <p className="sr-only" role="status" aria-atomic="true">{recentPayment&&`${recentPayment.line?.name??m.lines.find(line=>line.id===recentPayment.lineId)?.name??''} · ${receiptText(recentPayment)}`}</p>
-      {store.error&&<ErrorMessage>{store.error}</ErrorMessage>}
+      {store.outdated&&!modal&&!duplicate?<OutdatedNotice refresh={()=>void store.refresh()}/>:store.error&&!store.outdated&&<ErrorMessage>{store.error}</ErrorMessage>}
       {busy&&<StatusMessage className="callout">A confirmar gravação local…</StatusMessage>}
-      {uncertain&&<div className="callout" role="alert"><p>Gravação por confirmar. A tentativa original foi preservada.</p><button className="button" disabled={busy} onClick={retryPending}>Repetir confirmação</button></div>}
+      {uncertain&&<div className="callout" role="alert"><p>Confirmação por verificar · {store.pendingPeriod}.</p><button className="button" disabled={busy} onClick={retryPending}>Verificar confirmação</button></div>}
       {globalError&&<div id="workspace-error" className="form-error" role="alert"><p>{globalError}</p>{conflict&&<button className="button" onClick={reloadAfterConflict}>Recarregar para voltar a editar</button>}</div>}
       {notice&&<div className="toast" role="status"><Icon name="check" size={18}/><span>{notice}</span><button aria-label="Fechar mensagem" className="icon-button" onClick={()=>setNotice('')}><Icon name="close" size={16}/></button></div>}
       <div className="page-heading">
@@ -613,11 +682,11 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
           <button className="text-button" onClick={()=>navigate('recurring')}>Rever lembretes <span>{m.occurrences.filter(o=>o.state==='open').length} por rever</span></button>
           <a href="#budget-title">Ver sobras do mês</a>
         </div>:screen==='accounts'?<div className="account-actions">
-          <button className="button" disabled={busy||uncertain||conflict} onClick={()=>open('transfer')}><Icon name="transfer" size={17}/>Transferir entre contas</button>
-          <button className="button primary" disabled={busy||uncertain||conflict} onClick={()=>open('account')}><Icon name="plus" size={17}/>Adicionar conta</button>
-        </div>:screen==='base'?<button className="button primary" disabled={busy||uncertain||conflict} onClick={()=>open('line',{target:'base'})}><Icon name="plus" size={17}/>Adicionar ao modelo</button>:null}
+          <button className="button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('transfer')}><Icon name="transfer" size={17}/>Transferir entre contas</button>
+          <button className="button primary" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('account')}><Icon name="plus" size={17}/>Adicionar conta</button>
+        </div>:screen==='base'?<button className="button primary" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('line',{target:'base'})}><Icon name="plus" size={17}/>Adicionar ao modelo</button>:null}
       </div>
-      {screen === 'month' && <MonthOverview state={s} month={m} disabled={busy||uncertain||conflict}
+      {screen === 'month' && <MonthOverview state={s} month={m} disabled={readOnly||busy||uncertain||conflict}
         expandedMetric={expandedMetric} setExpandedMetric={setExpandedMetric}
         sourceName={sourceName} reserveLabel={reserve=>`${reserveLabel(reserve)} · ${nameOf(reserve.accountId)}`} reserveWarningText={reserveWarningText}
         navigate={navigate} showPendingPlan={showPendingPlan}
@@ -638,7 +707,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
             <div className="plan-toolbar-actions">
               <MovementFilters value={currentView} onApply={setPlanView} hasSnapshot={!!m.snapshot}
                 accounts={filterAccounts} categories={filterCategories}/>
-              <button className="button primary" disabled={busy||uncertain||conflict} onClick={()=>open(tab==='saving'?'goal':'line',{kind:tab})}>
+              <button className="button primary" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open(tab==='saving'?'goal':'line',{kind:tab})}>
                 <Icon name="plus" size={17}/>{createLabel[tab]}
               </button>
             </div>
@@ -650,7 +719,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
           </div>
         </section>
       </>}
-      {screen==='accounts'&&funding&&<><AccountFunding report={funding} month={m} open={fundingOpen} onOpenChange={setFundingOpen} busy={busy} uncertain={uncertain} disabled={busy||uncertain||conflict} revision={store.revision} dateDefault={dateDefault()} refresh={store.refresh} retry={store.retry?async()=>{await store.retry!();notify('Gravação local confirmada sem duplicar efeitos.');}:undefined} onPrepare={(account,amount,source,date)=>{open('transfer',{returnTo:'funding-launch'});setValues(v=>({...v,source:aid(source.id),destination:aid(account.id),amount:inputMoney(amount),date}));}} onRecord={(action,revision)=>run(action,`${action.routes.length} ${action.routes.length===1?'transferência registada':'transferências registadas'} localmente.`,undefined,revision)}/><section className="metrics account-totals" aria-label="Totais de contas e poupanças">
+      {screen==='accounts'&&funding&&<><AccountFunding memory={memory} space={space} report={funding} month={m} open={fundingOpen} onOpenChange={setFundingOpen} busy={busy} uncertain={uncertain} disabled={readOnly||busy||uncertain||conflict} revision={store.revision} outdated={store.outdated} dateDefault={dateDefault()} refresh={store.refresh} retry={async()=>{const confirmed=await store.retry();notify(confirmed?'Gravação local confirmada sem duplicar efeitos.':'Tentativa encerrada sem efeito.');}} onPrepare={(account,amount,source,date)=>{open('transfer',{returnTo:'funding-launch'});setValues(v=>({...v,source:aid(source.id),destination:aid(account.id),amount:inputMoney(amount),date}));}} onRecord={async(action,revision)=>{await run(action,`${action.routes.length} ${action.routes.length===1?'transferência registada':'transferências registadas'} localmente.`,undefined,revision);}}/><section className="metrics account-totals" aria-label="Totais de contas e poupanças">
           {catalogTotals.map(({label,keys,unit,tone,icon})=>{
             const amounts=keys.flatMap(key=>{const current=balance(m,key);return current===null?[]:[current];});
             const total=amounts.length||!keys.length?sum(amounts):null;
@@ -675,14 +744,14 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
                 <div><dt>{hasInvestment?'Despesas, poupanças e investimentos por realizar':'Despesas e poupanças por realizar'}</dt><dd>{money(commit)}</dd></div>
                 <div><dt>Saldo previsto</dt><dd className={b!=null&&commit!=null&&b-commit<0?'negative':''}>{money(b==null||commit==null?null:b-commit)}</dd></div></dl>
               {b!=null&&commit!=null&&b<commit&&<p className="warning">Fundos insuficientes nesta conta.</p>}
-              <button className="button" disabled={busy||uncertain||conflict} onClick={()=>open(b==null?'initial':'reconcile',{source})}>{b==null?'Introduzir saldo inicial':'Atualizar montante'}</button>
-              <details><summary>Ver movimentos da conta</summary>{history(source)}</details>
+              <button className="button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open(b==null?'initial':'reconcile',{source})}>{b==null?'Introduzir saldo inicial':'Atualizar montante'}</button>
+              <HistoryDisclosure title="Ver movimentos da conta">{history(source)}</HistoryDisclosure>
               <details className="account-management"><summary>Gerir conta</summary>
                 <p>{a.archived?'Fora das novas seleções de conta.':'Pode retirar esta conta das novas seleções.'} Os registos guardados continuam disponíveis.</p>
                 <div className="account-actions">
-                  <button className="text-button" disabled={busy||uncertain||conflict} onClick={()=>open('account',{id:a.id})}>Editar conta</button>
-                  <button className="text-button" disabled={busy||uncertain||conflict} onClick={()=>toggleAccount(a)}>{a.archived?'Reativar':'Desativar'}</button>
-                  <button className={`text-button${deletable?' danger':''}`} disabled={!deletable||busy||uncertain||conflict} onClick={()=>open('deleteAccount',{id:a.id})}>Eliminar conta</button>
+                  <button className="text-button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('account',{id:a.id})}>Editar conta</button>
+                  <button className="text-button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>toggleAccount(a)}>{a.archived?'Reativar':'Desativar'}</button>
+                  <button className={`text-button${deletable?' danger':''}`} disabled={readOnly||!deletable||busy||uncertain||conflict} onClick={()=>open('deleteAccount',{id:a.id})}>Eliminar conta</button>
                 </div>
                 {!deletable&&<p>Disponível para eliminação quando a conta nunca foi usada em saldos ou movimentos e está sem referências no plano, nas poupanças e nos lembretes.</p>}
               </details>
@@ -693,7 +762,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
       {screen==='savings'&&<>
         <div className="savings-toolbar">
           <SearchField label="Pesquisar poupanças" placeholder="Pesquisar poupança ou banco…" value={search} onChange={setSearch}/>
-          <button className="button" disabled={busy||uncertain||conflict} onClick={()=>open('reserve')}>Criar poupança</button>
+          <button className="button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('reserve')}>Criar poupança</button>
         </div>
         <div className="callout savings-explainer"><Icon name="leaf"/><p>Quando põe dinheiro numa poupança, o saldo disponível na conta à ordem baixa e o saldo da poupança aumenta. Se pagar uma despesa com esse dinheiro, o valor é descontado da poupança.</p></div>
         {!s.reserves.length&&<div className="empty"><h2>Ainda não tem poupanças</h2><p>Crie uma poupança para indicar o saldo acumulado e definir um objetivo para o mês.</p></div>}
@@ -707,7 +776,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
           return <article className="panel account-card savings-card" id={`reserve-${r.id}`} tabIndex={-1} key={r.id}>
             <div className="section-top"><h2>{reserveLabel(r)}</h2><Icon name="savings"/></div>{accountBadge(r.accountId)}
             <strong className="balance-value">{money(b??defaultReserveInitial(s,m,r.id))}</strong><span className="tiny">Total acumulado da poupança{b===null?' · estimativa por confirmar':''}</span>
-            <button className="button" disabled={busy||uncertain||conflict} onClick={()=>open(b===null?'initial':'reconcile',{source:key})}>
+            <button className="button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open(b===null?'initial':'reconcile',{source:key})}>
               {b===null?'Introduzir Total Acumulado da Poupança':'Atualizar montante total poupado'}
             </button>
             <dl className="savings-progress">
@@ -718,10 +787,10 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
               <div><dt>Retirado este mês</dt><dd>{money(reserveUse(m,r.id).withdrawn)}</dd></div>
             </dl>
             {warning&&<p className="warning">{reserveWarningText(warning)}</p>}
-            <button className="text-button" disabled={busy||uncertain||conflict} onClick={()=>open('goal',{reserveId:r.id})}>{goalLines.length?'Editar objetivo do mês':'Quanto quer poupar este mês?'}</button>
-            <button className="button primary-soft" disabled={busy||uncertain||conflict} onClick={()=>open('save',{reserveId:r.id})}>Poupar</button>
-            {canAssociate&&<button className="text-button" disabled={busy||uncertain||conflict} onClick={()=>open('associateSaving',{reserveId:r.id})}>Associar reforço já registado</button>}
-            <details><summary>Histórico da poupança</summary>{history(key)}</details>
+            <button className="text-button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('goal',{reserveId:r.id})}>{goalLines.length?'Editar objetivo do mês':'Quanto quer poupar este mês?'}</button>
+            <button className="button primary-soft" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('save',{reserveId:r.id})}>Poupar</button>
+            {canAssociate&&<button className="text-button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('associateSaving',{reserveId:r.id})}>Associar reforço já registado</button>}
+            <HistoryDisclosure title="Histórico da poupança">{history(key)}</HistoryDisclosure>
           </article>;
         })}</div>
         <section className="panel spaced" aria-labelledby="planned-savings-title">
@@ -730,7 +799,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
           </div>{lineList(m.lines.filter(l=>l.kind==='saving'))}
         </section>
       </>}
-      {screen==='recurring'&&<RecurringPayments state={s} month={m} disabled={busy||uncertain||conflict}
+      {screen==='recurring'&&<RecurringPayments state={s} month={m} disabled={readOnly||busy||uncertain||conflict}
         onEdit={id=>open('recurring',{id})} onLink={id=>open('link',{id})}
         onResolve={(id,mode)=>safe({type:'occurrence',id,mode},mode==='add'?'Despesa adicionada ao plano. O pagamento continua por registar.':'Lembrete dispensado apenas neste mês.')}
         onView={id=>{navigate('plan');setTab('expense');open('detail',{id});}}/>}
@@ -741,17 +810,16 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
           {k==='income'&&<p className="panel-intro">Inclua aqui salários e outros rendimentos mensais. Entram no plano de cada novo mês e somam ao saldo quando registar o recebimento.</p>}
           {lineList(s.base.filter(l=>l.kind===k),k)}
         </section>)}</>}
-      {screen==='settings'&&<><div className="callout"><Icon name="info"/><p>Desativar uma conta ou arquivar uma categoria retira-a das novas seleções e preserva as referências existentes.</p></div><div className="settings-grid">{(['account','category'] as const).map(type=>{
+      {screen==='settings'&&<>{sharing}<div className="callout"><Icon name="info"/><p>Desativar uma conta ou arquivar uma categoria retira-a das novas seleções e preserva as referências existentes.</p></div><div className="settings-grid">{(['account','category'] as const).map(type=>{
         const items=type==='account'?s.accounts:s.categories;
         const update=(filter:string)=>setCatalogSearch(previous=>({...previous,[type]:filter}));
         const visible=items.filter(item=>matchesText(item.name,catalogSearch[type])).sort((a,b)=>compareNames(a.name,b.name));
-        return <section className="panel" key={type}><div className="section-top"><h2>{type==='account'?'Contas':'Categorias'}</h2><button className="text-button" disabled={busy||uncertain||conflict} onClick={()=>open(type)}><Icon name="plus" size={16}/>Adicionar</button></div><SearchField className="catalog-search" label={`Pesquisar ${type==='account'?'contas':'categorias'}`} placeholder="Pesquisar…" value={catalogSearch[type]} onChange={update}/>{!items.length?<div className="empty">Ainda sem {type==='account'?'contas':'categorias'}</div>:!visible.length?<EmptySearch onClear={()=>update('')}/>:visible.map(item=><div className="catalog-row" key={item.id}><span>{type==='account'?accountBadge(item.id):item.name}{item.archived&&<small> · {type==='account'?'Desativada':'Arquivada'}</small>}</span><div><button className="text-button" disabled={busy||uncertain||conflict} onClick={()=>open(type,{id:item.id})}>Editar</button><button className="text-button muted" disabled={busy||uncertain||conflict} onClick={()=>type==='account'?toggleAccount(s.accounts.find(a=>a.id===item.id)!):safe({type:'category',category:{...item,archived:!item.archived}},item.archived?'Categoria reativada.':'Categoria arquivada. Referências preservadas.')}>{item.archived?'Reativar':type==='account'?'Desativar':'Arquivar'}</button></div></div>)}</section>;})}</div>
-        {showLocalData&&<LocalFiles/>}
+        return <section className="panel" key={type}><div className="section-top"><h2>{type==='account'?'Contas':'Categorias'}</h2><button className="text-button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open(type)}><Icon name="plus" size={16}/>Adicionar</button></div><SearchField className="catalog-search" label={`Pesquisar ${type==='account'?'contas':'categorias'}`} placeholder="Pesquisar…" value={catalogSearch[type]} onChange={update}/>{!items.length?<div className="empty">Ainda sem {type==='account'?'contas':'categorias'}</div>:!visible.length?<EmptySearch onClear={()=>update('')}/>:visible.map(item=><div className="catalog-row" key={item.id}><span>{type==='account'?accountBadge(item.id):item.name}{item.archived&&<small> · {type==='account'?'Desativada':'Arquivada'}</small>}</span><div><button className="text-button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open(type,{id:item.id})}>Editar</button><button className="text-button muted" disabled={readOnly||busy||uncertain||conflict} onClick={()=>type==='account'?toggleAccount(s.accounts.find(a=>a.id===item.id)!):safe({type:'category',category:{...item,archived:!item.archived}},item.archived?'Categoria reativada.':'Categoria arquivada. Referências preservadas.')}>{item.archived?'Reativar':type==='account'?'Desativar':'Arquivar'}</button></div></div>)}</section>;})}</div>
       </>}
-      <footer className="page-footer"><span>O meu mês <span>·</span> Cada mês, um novo ponto de partida.</span>{showLocalData&&<span>SQLite local</span>}</footer>
+      <footer className="page-footer"><span>O meu mês <span>·</span> Cada mês, um novo ponto de partida.</span></footer>
     </main></div>
-    {modal&&<Dialog title={titles[modal.kind]} onClose={close} returnTo={modal.returnTo}>{conflict&&<div className="callout" role="alert"><p>Os dados mudaram desde que abriu esta edição.</p><button className="button" onClick={reloadAfterConflict}>Recarregar para voltar a editar</button></div>}{busy&&<StatusMessage className="callout">A confirmar gravação local…</StatusMessage>}{uncertain&&<div className="callout"><p>Resposta por confirmar. Repita a mesma tentativa com segurança.</p><button className="button" disabled={busy} onClick={retryPending}>Repetir confirmação</button></div>}{modal.kind==='detail'&&selectedLine?<>
-      <div className="dialog-body"><div className="detail-subheading">{accountBadge(selectedLine.accountId)}<span className="pill">{status(selectedLine)}</span></div><dl className="detail-values"><div><dt>Plano inicial {m.snapshot?`· ${dateLabel(m.snapshot.date)}`:'· ainda não guardado'}</dt><dd>{m.snapshot?money(initialPlan(m,selectedLine)):'Sem referência'}</dd></div><div><dt>{selectedLine.kind==='saving'?'Objetivo do mês':'Plano atual'}</dt><dd>{money(selectedLine.plan)}</dd></div>{selectedReminder&&<div><dt>Data do lembrete</dt><dd>{dateLabel(selectedReminder.date)}</dd></div>}{m.snapshot?.reminderDates?.[selectedLine.id]&&<div><dt>Data na referência inicial</dt><dd>{dateLabel(m.snapshot.reminderDates[selectedLine.id])}</dd></div>}<div><dt>{selectedLine.kind==='saving'?'Já poupado para o objetivo':'Realizado'}</dt><dd>{money(realized(m,selectedLine.id))}</dd></div><div><dt>{selectedLine.kind==='saving'?'Falta poupar':'Por realizar'}</dt><dd>{money(pending(m,selectedLine))}</dd></div><div><dt>Desvio realizado face ao plano atual</dt><dd>{selectedLine.plan==null?'Por indicar':`${realized(m,selectedLine.id)>selectedLine.plan?'+':''}${money(realized(m,selectedLine.id)-selectedLine.plan)}`}</dd></div>{m.snapshot&&<div><dt>Alteração do plano face ao inicial</dt><dd>{selectedLine.plan==null||initialPlan(m,selectedLine)==null?'Por indicar':money(selectedLine.plan-initialPlan(m,selectedLine)!)}</dd></div>}</dl>{m.snapshot&&!m.snapshot.lines.some(l=>l.id===selectedLine.id)&&<p className="warning">Adicionado depois do plano inicial. Referência inicial: 0,00 €.</p>}<div className="detail-buttons">
+    {duplicate?<DuplicateReview notice={duplicate.notice} busy={busy||uncertain} onClose={dismissDuplicate} onConfirm={()=>void confirmDuplicate()} refresh={store.outdated?()=>void store.refresh():undefined}/>:modal&&<Dialog title={titles[modal.kind]} onClose={close} returnTo={modal.returnTo}>{store.outdated&&<OutdatedNotice refresh={()=>void store.refresh()}/>} {conflict&&<div className="callout" role="alert"><p>Os dados mudaram desde que abriu esta edição.</p><button className="button" onClick={reloadAfterConflict}>Recarregar para voltar a editar</button></div>}{busy&&<StatusMessage className="callout">A confirmar gravação local…</StatusMessage>}{uncertain&&<div className="callout"><p>Resposta por confirmar. Consulte o resultado antes de iniciar outro registo.</p><button className="button" disabled={busy} onClick={retryPending}>Verificar confirmação</button></div>}{modal.kind==='detail'&&selectedLine?<>
+      <div className="dialog-body"><div className="detail-subheading">{accountBadge(selectedLine.accountId)}<span className="pill">{status(selectedLine)}</span></div><dl className="detail-values"><div><dt>Plano inicial {m.snapshot?`· ${dateLabel(m.snapshot.date)}`:'· ainda não guardado'}</dt><dd>{m.snapshot?money(initialPlan(m,selectedLine)):'Sem referência'}</dd></div><div><dt>{selectedLine.kind==='saving'?'Objetivo do mês':'Plano atual'}</dt><dd>{money(selectedLine.plan)}</dd></div>{selectedReminder&&<div><dt>Data do lembrete</dt><dd>{dateLabel(selectedReminder.date)}</dd></div>}{m.snapshot?.reminderDates?.[selectedLine.id]&&<div><dt>Data na referência inicial</dt><dd>{dateLabel(m.snapshot.reminderDates[selectedLine.id])}</dd></div>}<div><dt>{selectedLine.kind==='saving'?'Já poupado para o objetivo':'Realizado'}</dt><dd>{money(realized(m,selectedLine.id))}</dd></div><div><dt>{selectedLine.kind==='saving'?'Falta poupar':'Por realizar'}</dt><dd>{money(pending(m,selectedLine))}</dd></div><div><dt>Desvio realizado face ao plano atual</dt><dd>{selectedLine.plan==null?'Por indicar':`${realized(m,selectedLine.id)>selectedLine.plan?'+':''}${money(realized(m,selectedLine.id)-selectedLine.plan)}`}</dd></div>{m.snapshot&&<div><dt>Alteração do plano face ao inicial</dt><dd>{selectedLine.plan==null||initialPlan(m,selectedLine)==null?'Por indicar':money(selectedLine.plan-initialPlan(m,selectedLine)!)}</dd></div>}</dl>{m.snapshot&&!m.snapshot.lines.some(l=>l.id===selectedLine.id)&&<p className="warning">Adicionado depois do plano inicial. Referência inicial: 0,00 €.</p>}{!readOnly&&<><div className="detail-buttons">
         {canRegisterLine(selectedLine)&&<button className="button primary" disabled={busy||uncertain||conflict} onClick={()=>selectedLine.kind==='saving'
           ?open('save',{id:selectedLine.id,reserveId:selectedLine.reserveId,returnTo:`detail-${selectedLine.id}`})
           :open('payment',{id:selectedLine.id,returnTo:`detail-${selectedLine.id}`})}>
@@ -766,13 +834,21 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
       {selectedLine.kind==='expense'&&!completed(m,selectedLine.id)&&<div className="other-bank">
         <button className="button" disabled={busy||uncertain||conflict} onClick={()=>open('payment',{id:selectedLine.id,otherBank:true,returnTo:`detail-${selectedLine.id}`})}>Registar pagamento por outro banco</button>
         <p className="tiny">Use esta opção se pagou a despesa a partir de um banco diferente do previsto. O montante será descontado no banco que indicar.</p>
-      </div>}{m.snapshot&&<p className="tiny">Referência guardada: {m.snapshot.lines.find(l=>l.id===selectedLine.id)?.name??'Linha adicionada depois'} · {m.snapshot.catalog.accounts.find(a=>a.id===m.snapshot!.lines.find(l=>l.id===selectedLine.id)?.accountId)?.name??'Conta por indicar'} · {m.snapshot.catalog.categories.find(c=>c.id===m.snapshot!.lines.find(l=>l.id===selectedLine.id)?.categoryId)?.name??'Categoria por indicar'}</p>}<h3 className="spaced">Registos e correções</h3>{history(undefined,selectedLine.id)}{error&&<p id="form-error" role="alert" className="form-error">{error}</p>}</div><div className="dialog-footer"><button className="button" onClick={close}>Fechar</button></div>
-    </>:<form key={modal.requestId} onSubmit={submit} noValidate aria-busy={busy}><fieldset className="form-fields" disabled={busy||uncertain}><div className="dialog-body">
+      </div>}</>}{m.snapshot&&<p className="tiny">Referência guardada: {m.snapshot.lines.find(l=>l.id===selectedLine.id)?.name??'Linha adicionada depois'} · {m.snapshot.catalog.accounts.find(a=>a.id===m.snapshot!.lines.find(l=>l.id===selectedLine.id)?.accountId)?.name??'Conta por indicar'} · {m.snapshot.catalog.categories.find(c=>c.id===m.snapshot!.lines.find(l=>l.id===selectedLine.id)?.categoryId)?.name??'Categoria por indicar'}</p>}<h3 className="spaced">Registos e correções</h3>{history(undefined,selectedLine.id)}{error&&<p id="form-error" role="alert" className="form-error">{error}</p>}</div><div className="dialog-footer"><button className="button" onClick={close}>Fechar</button></div>
+    </>:<form key={modal.requestId} onSubmit={submit} noValidate aria-busy={busy}><fieldset className="form-fields" disabled={readOnly||busy||uncertain}><div className="dialog-body">
       <InitialBalances sources={missingBalances} values={values} errorSource={initialErrorSource} error={error} onChange={(source,value)=>set(`initial:${source}`,value)}/>
+      {correction&&<><p className="preview">Ao confirmar, o histórico guarda a compensação e o registo corrigido no mesmo mês.</p>
+        {amountField(correction.type==='total'?'Total gasto até à data (€)':'Montante (€)')}{dateField}
+        {correction.type==='adjustment'?<label>Motivo da diferença<input value={value('note')} onChange={e=>set('note',e.target.value)} required/></label>:
+          correction.line?.kind==='expense'&&correction.type!=='total'&&<label>Descrição<input value={value('description')} onChange={e=>set('description',e.target.value)}/></label>}
+        {value('source')&&<p className="tiny">Origem: {sourceName(value('source'))}{value('destination')&&correction.type==='transfer'?` · Destino: ${sourceName(value('destination'))}`:''}</p>}
+        {!!correction.lineId&&!correction.line?.variable&&correction.type!=='detail'&&
+          <label className="checkbox"><input type="checkbox" checked={value('complete')==='true'} onChange={e=>set('complete',String(e.target.checked))}/>Concluir pelo valor indicado</label>}
+      </>}
       {modal.kind==='deleteAccount'&&<p>Eliminar definitivamente <strong>{nameOf(modal.id!)}</strong>? Para voltar a usá-la, terá de adicionar uma conta nova.</p>}
 
       {modal.kind==='month'&&<><label>Mês<input data-initial-focus type="month" name="period" aria-label="Mês" value={value('period')} onChange={e=>set('period',e.target.value)} aria-invalid={invalidField('PERIOD')} aria-describedby={invalidField('PERIOD')?'form-error':undefined} required/>{fieldError('PERIOD')}</label>
-        <p className="preview" aria-live="polite">{s.months[value('period')]?'Já existe. Vai reabrir o plano, os lembretes e os registos guardados.':`Mês novo · ${s.base.length} definições do Modelo Base. ${precedingMonth(s,value('period'))?'Usa os saldos conhecidos das contas no mês anterior.':'Sem mês anterior, os saldos das contas ficam por indicar.'} As receitas entram como previstas.`}</p></>}
+        <p className="preview" aria-live="polite">{store.periods.includes(value('period'))?'Já existe. Vai reabrir o plano, os lembretes e os registos guardados.':`Mês novo · ${s.base.length} definições do Modelo Base. ${store.periods.includes(previousPeriod(value('period')))?'Usa os saldos conhecidos das contas no mês anterior.':'Sem mês anterior, os saldos das contas ficam por indicar.'} As receitas entram como previstas.`}</p></>}
       {['initial','reconcile'].includes(modal.kind)&&<>
         <p className="scope-label"><strong>{sourceName(modal.source!)}</strong></p>
         {amountField(savingsInitial?'Total que vê hoje no banco (€)':modal.kind==='initial'?'Saldo inicial deste mês (€)':'Saldo observado no banco (€)',!(savingsInitial&&modal.kind==='initial'))}
@@ -785,7 +861,7 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
         </>}
         {modal.kind==='initial'&&!savingsInitial&&<p className="preview">Indique o saldo da conta à ordem, separado das poupanças.</p>}
       </>}
-      {modal.kind==='payment'&&selectedLine&&<><p><strong>{selectedLine.name}</strong> · previsto {money(selectedLine.plan)} · falta {money(pending(m,selectedLine))}</p>{selectedLine.variable&&!modal.otherBank&&<label>Tipo de registo<select value={value('mode')} onChange={e=>{set('mode',e.target.value);set('amount',e.target.value==='total'?inputMoney(realized(m,selectedLine.id)):'' );}}><option value="purchase">Compra individual</option><option value="total">Total acumulado</option><option value="detail">Detalhar compra já incluída num total</option></select></label>}{selectedLine.variable&&value('mode')!=='total'&&<label>Nome da compra (opcional)<input value={value('description')} onChange={e=>set('description',e.target.value)} placeholder="Ex.: Continente ou Mercearia" maxLength={120}/></label>}{value('mode')==='detail'&&<><label>Ajuste que já inclui esta compra<Select options={activeEvents(m).filter(e=>e.lineId===selectedLine.id&&e.type==='total'&&e.amount>0&&totalUnallocated(m,e)>0).map(e=>({id:e.id,name:`${dateLabel(e.date)} · ${money(totalUnallocated(m,e))} por detalhar · ${Object.keys(e.deltas).map(sourceName).join(', ')}`}))} emptyLabel="Sem ajustes por detalhar" placeholder="Escolha o ajuste" aria-invalid={invalidField('DETAIL')} aria-describedby={invalidField('DETAIL')?'form-error':undefined} value={value('totalId')} onChange={e=>set('totalId',e.target.value)} required/>{fieldError('DETAIL')}</label><p className="preview">Use a mesma origem do ajuste. Este detalhe identifica uma compra já contabilizada e não aumenta o gasto nem volta a descontar dinheiro.</p></>}{amountField(value('mode')==='total'?'Total gasto até à data (€)':'Montante (€)')}<div className="form-two">{dateField}{sourceField(selectedLine.kind==='income'?'Banco onde recebe o dinheiro':modal.otherBank?'Banco de onde saiu o dinheiro':'Origem do dinheiro','source',expensePaymentSources)}</div>{selectedLine.kind==='expense'&&value('mode')!=='detail'&&<p className="tiny">Escolha a conta ou poupança que usou. No plano: {sourceName(selectedLine.reserveId?rid(selectedLine.reserveId):aid(selectedLine.accountId))}.</p>}{selectedLine.kind==='saving'&&<p className="preview">Destino: {sourceName(rid(selectedLine.reserveId!))}. Não conta como despesa.</p>}{selectedLine.kind==='investment'&&<p className="preview">A aplicação reduz o saldo da conta principal e fica no histórico. O valor da carteira não é acompanhado nesta aplicação.</p>}{value('mode')==='total'&&totalPreviewBox}{!selectedLine.variable&&value('mode')!=='detail'&&completionField}<p className="tiny">O estado e o saldo mudam após confirmar. Pode anular o registo no detalhe para o corrigir.</p></>}
+      {modal.kind==='payment'&&selectedLine&&<><p><strong>{selectedLine.name}</strong> · previsto {money(selectedLine.plan)} · falta {money(pending(m,selectedLine))}</p>{selectedLine.variable&&!modal.otherBank&&<label>Tipo de registo<select value={value('mode')} onChange={e=>{set('mode',e.target.value);set('amount',e.target.value==='total'?inputMoney(realized(m,selectedLine.id)):'' );}}><option value="purchase">Compra individual</option><option value="total">Total acumulado</option><option value="detail">Detalhar compra já incluída num total</option></select></label>}{selectedLine.variable&&value('mode')!=='total'&&<label>Nome da compra (opcional)<input value={value('description')} onChange={e=>set('description',e.target.value)} placeholder="Ex.: Continente ou Mercearia" maxLength={120}/></label>}{value('mode')==='detail'&&<><label>Ajuste que já inclui esta compra<Select options={activeEvents(m).filter(e=>e.lineId===selectedLine.id&&e.type==='total'&&e.amount>0&&totalUnallocated(m,e)>0).map(e=>({id:e.id,name:`${dateLabel(e.date)} · ${money(totalUnallocated(m,e))} por detalhar · ${Object.keys(e.deltas).map(sourceName).join(', ')}`}))} emptyLabel="Sem ajustes por detalhar" placeholder="Escolha o ajuste" aria-invalid={invalidField('DETAIL')} aria-describedby={invalidField('DETAIL')?'form-error':undefined} value={value('totalId')} onChange={e=>set('totalId',e.target.value)} required/>{fieldError('DETAIL')}</label><p className="preview">Use a mesma origem do ajuste. Este detalhe identifica uma compra já contabilizada e não aumenta o gasto nem volta a descontar dinheiro.</p></>}{amountField(value('mode')==='total'?'Total gasto até à data (€)':'Montante (€)')}<div className="form-two">{dateField}{sourceField(selectedLine.kind==='income'?'Banco onde recebe o dinheiro':modal.otherBank?'Banco de onde saiu o dinheiro':'Origem do dinheiro','source',expensePaymentSources)}</div>{selectedLine.kind==='expense'&&value('mode')!=='detail'&&<p className="tiny">Escolha a conta ou poupança que usou. No plano: {sourceName(selectedLine.reserveId?rid(selectedLine.reserveId):aid(selectedLine.accountId))}.</p>}{selectedLine.kind==='saving'&&<p className="preview">Destino: {sourceName(rid(selectedLine.reserveId!))}. Não conta como despesa.</p>}{selectedLine.kind==='investment'&&<p className="preview">A aplicação reduz o saldo da conta principal e fica no histórico. O valor da carteira não é acompanhado nesta aplicação.</p>}{value('mode')==='total'&&totalPreviewBox}{!selectedLine.variable&&value('mode')!=='detail'&&completionField}<p className="tiny">O estado e o saldo mudam após confirmar. Pode corrigir ou anular o registo no detalhe.</p></>}
       {expenseRemainder>0&&remainderReserves.length>0&&<div className="preview expense-remainder">
         <p>Sobraram <strong>{money(expenseRemainder)}</strong> do valor previsto.</p>
         <label>Para que poupança quer mover a sobra?<Select
@@ -902,12 +978,12 @@ export function FinanceWorkspace({store,recovery,showLocalData}:{store:Store;rec
       {error&&!fieldCode&&<div id="form-error" role="alert" className="form-error"><p>{error}</p>
 
       </div>}
-    </div><div className="dialog-footer"><button type="button" className="button" onClick={close}>{modal.optionalGoal?'Agora não':'Cancelar'}</button><button className={`button ${modal.kind==='deleteAccount'?'danger':'primary'}`} type="submit" disabled={conflict||modal.kind==='link'&&!linkTarget}>{modal.kind==='deleteAccount'?'Eliminar definitivamente':modal.kind==='month'?'Abrir mês':missingBalances.length?'Confirmar saldos e registo':modal.kind==='payment'?'Confirmar registo':'Confirmar'}</button></div></fieldset></form>}</Dialog>}
+    </div><div className="dialog-footer"><button type="button" className="button" onClick={close}>{modal.optionalGoal?'Agora não':'Cancelar'}</button><button className={`button ${modal.kind==='deleteAccount'?'danger':'primary'}`} type="submit" disabled={conflict||store.outdated||modal.kind==='link'&&!linkTarget}>{modal.kind==='deleteAccount'?'Eliminar definitivamente':modal.kind==='month'?'Abrir mês':missingBalances.length?'Confirmar saldos e registo':modal.kind==='payment'?'Confirmar registo':'Confirmar'}</button></div></fieldset></form>}</Dialog>}
   </div>;
 
   function history(source?:string,lineId?:string) {
-    return <MovementHistory month={m} categories={s.categories} source={source} lineId={lineId}
-      focusedEvent={modal?.eventId} sourceName={sourceName} disabled={busy||uncertain||conflict}
-      onVoid={(id,message)=>safe({type:'void',id},message)}/>;
+    return <MovementHistory key={lineId??source} owner={store.historyHeaders['X-Account']} space={store.spaceId} month={m} categories={s.categories} source={source} lineId={lineId}
+      focusedEvent={modal?.eventId} sourceName={sourceName} disabled={busy||uncertain||conflict} readOnly={readOnly}
+      onVoid={(id,message)=>safe({type:'void',id},message)} onCorrect={openCorrection}/>;
   }
 }

@@ -1,7 +1,27 @@
-import { rid, type Month, type Category } from '../domain/model';
-import { activeEvents } from '../domain/projections';
+import { useEffect, useState, type ReactNode } from 'react';
+import { rid, type Month, type Category, type Event } from '../domain/model';
+import { activeEvents, reversedIds } from '../domain/projections';
 import { dateLabel, money } from '../domain/money';
+import { recordedAt } from './MovementNotices';
+export function HistoryDisclosure({ title, children }: { title: string; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>{title}</summary>
+      {open && children}
+    </details>
+  );
+}
+type Detail = {
+  id: string;
+  note: string;
+  sourceNames?: Record<string, string>;
+  author?: string | null;
+  createdAt?: string | null;
+};
 interface Props {
+  owner: string;
+  space: string;
   month: Month;
   categories: Category[];
   source?: string;
@@ -9,18 +29,26 @@ interface Props {
   focusedEvent?: string;
   sourceName: (id: string) => string;
   disabled: boolean;
+  readOnly: boolean;
   onVoid: (id: string, message: string) => void;
+  onCorrect: (event: Event) => void;
 }
 export function MovementHistory({
   month: m,
+  owner,
+  space,
   categories,
   source,
   lineId,
   focusedEvent,
   sourceName,
   disabled,
+  readOnly,
   onVoid,
+  onCorrect,
 }: Props) {
+  const reversed = reversedIds(m);
+  const replacements = new Set(m.events.flatMap((e) => (e.corrects ? [e.corrects] : [])));
   const events = m.events.filter((e) =>
     lineId
       ? e.lineId === lineId
@@ -30,10 +58,59 @@ export function MovementHistory({
           (!!e.savingParentId &&
             m.events.some((parent) => parent.id === e.savingParentId && parent.deltas[source] > 0))),
   );
+  const pageSize = 20;
+  const [start, setStart] = useState(() =>
+    Math.max(0, Math.floor(events.findIndex((e) => e.id === focusedEvent) / pageSize) * pageSize),
+  );
+  const pageStart = Math.min(start, Math.max(0, Math.floor((events.length - 1) / pageSize) * pageSize));
+  const rows = events.slice(pageStart, pageStart + pageSize);
+  const params = new URLSearchParams({ spaceId: space, period: m.period });
+  for (const item of rows) params.append('eventId', item.id);
+  const url = rows.length ? '/api/history?' + params : '';
+  const [details, setDetails] = useState<{ url: string; entries: Detail[]; error?: boolean }>({
+    url: '',
+    entries: [],
+  });
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!url) return;
+    const controller = new AbortController();
+    void fetch(url, { cache: 'no-store', headers: { 'X-Account': owner }, signal: controller.signal })
+      .then(async (r) => {
+        if (!r.ok) {
+          if (r.status === 403 && !controller.signal.aborted) {
+            const failure = await r.json();
+            if (controller.signal.aborted) return;
+            if (failure.code === 'SPACE_ACCESS')
+              window.dispatchEvent(
+                new CustomEvent('omeumes.spaceAccess', { detail: { space, code: failure.code } }),
+              );
+            else window.dispatchEvent(new Event('omeumes.access'));
+          }
+          throw new Error();
+        }
+        const data: { entries: Detail[] } = await r.json();
+        if (!controller.signal.aborted) setDetails({ url, entries: data.entries });
+      })
+      .catch(() => {
+        if (!controller.signal.aborted) setDetails({ url, entries: [], error: true });
+      });
+    return () => controller.abort();
+  }, [url, owner, attempt]);
   if (!events.length) return <p className="empty-history">Ainda sem registos neste mês.</p>;
   return (
     <div className="history">
-      {events.map((e) => {
+      {details.url === url && details.error && (
+        <p role="alert">
+          Falha ao consultar o histórico.{' '}
+          <button onClick={() => setAttempt((n) => n + 1)}>Tentar novamente</button>
+        </p>
+      )}
+      {rows.map((base) => {
+        const e = {
+          ...base,
+          ...(details.url === url ? details.entries.find((d) => d.id === base.id) : undefined),
+        };
         const expenseLine =
           source?.startsWith('a:') && e.lineId
             ? (e.line ??
@@ -42,15 +119,28 @@ export function MovementHistory({
             : undefined;
         const expense = expenseLine?.kind === 'expense' ? expenseLine : undefined;
         const category = expense && categories.find((c) => c.id === expense.categoryId)?.name;
+        const inactive = e.voided || reversed.has(e.id);
+        const corrected = replacements.has(e.id);
+        const canCorrect =
+          ['execution', 'total', 'adjustment', 'transfer', 'detail', 'saving'].includes(e.type) &&
+          !m.events.some(
+            (entry) => entry.saving?.transferId === e.id && !reversed.has(entry.id) && !entry.voided,
+          );
         return (
           <div
-            className={e.voided ? 'voided' : ''}
+            className={inactive ? 'voided' : ''}
             key={e.id}
             tabIndex={focusedEvent === e.id ? -1 : undefined}
             data-initial-focus={focusedEvent === e.id ? true : undefined}
           >
             <div>
-              <strong>{e.description || expense?.name || e.note}</strong>
+              <strong>
+                {e.reverses
+                  ? e.historical
+                    ? 'Compensação de anulação histórica'
+                    : 'Compensação'
+                  : e.description || expense?.name || e.note}
+              </strong>
               {expense && e.description && e.description !== expense.name && <small>{expense.name}</small>}
               {category && <small>{category}</small>}
               {(expense ? e.type === 'total' || e.type === 'detail' : e.description) && (
@@ -58,13 +148,21 @@ export function MovementHistory({
               )}
               <small>
                 {dateLabel(e.date)}
-                {e.voided ? ' · Anulado' : ''}
+                {inactive ? (corrected ? ' · Corrigido' : ' · Anulado') : ''}
+                {e.corrects ? ' · Registo de substituição' : ''}
                 {lineId && e.type === 'total'
                   ? ' · ajuste, sem nova compra'
                   : e.type === 'detail'
                     ? ' · já incluída, sem novo gasto'
                     : ''}
               </small>
+              {(e.authorship === 'unknown' || e.author) && (
+                <small>
+                  {e.author ? `Registado por ${e.author}` : 'Autoria histórica não disponível'}
+                  {e.createdAt && ` · ${recordedAt(e.createdAt)}`}
+                </small>
+              )}
+              {e.historical && <small>Instante da anulação histórica indisponível</small>}
               {e.saving && (
                 <small>
                   {money(e.amount)} para o objetivo · {money(e.saving.extra)} de reforço extra
@@ -92,25 +190,53 @@ export function MovementHistory({
                 )}
               </span>
             </div>
-            {!e.voided && (
-              <button
-                className="text-button danger"
-                disabled={disabled}
-                onClick={() =>
-                  onVoid(
-                    e.id,
-                    e.saving?.transferId || activeEvents(m).some((x) => x.saving?.transferId === e.id)
-                      ? 'Transferência e reforço anulados. Os saldos foram atualizados.'
-                      : 'Registo anulado. Os valores foram atualizados.',
-                  )
-                }
-              >
-                Anular
-              </button>
+            {!readOnly && !inactive && !e.reverses && (
+              <div className="history-actions">
+                {canCorrect && (
+                  <button
+                    className="text-button"
+                    disabled={disabled || details.url !== url || details.error}
+                    onClick={() => onCorrect(e)}
+                  >
+                    Corrigir
+                  </button>
+                )}
+                <button
+                  className="text-button danger"
+                  disabled={disabled}
+                  onClick={() =>
+                    onVoid(
+                      e.id,
+                      e.saving?.transferId || activeEvents(m).some((x) => x.saving?.transferId === e.id)
+                        ? 'Transferência e reforço anulados. Os saldos foram atualizados.'
+                        : 'Registo anulado. Os valores foram atualizados.',
+                    )
+                  }
+                >
+                  Anular
+                </button>
+              </div>
             )}
           </div>
         );
       })}
+      {events.length > pageSize && (
+        <div className="auth-actions">
+          <button className="button" disabled={!pageStart} onClick={() => setStart(pageStart - pageSize)}>
+            Anterior
+          </button>
+          <span>
+            {pageStart + 1}–{pageStart + rows.length} de {events.length}
+          </span>
+          <button
+            className="button"
+            disabled={pageStart + rows.length >= events.length}
+            onClick={() => setStart(pageStart + pageSize)}
+          >
+            Seguinte
+          </button>
+        </div>
+      )}
     </div>
   );
 }

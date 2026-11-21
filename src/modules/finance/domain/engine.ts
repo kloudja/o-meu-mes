@@ -4,7 +4,7 @@ import { accountFunding, transferRoutes } from './funding';
 import { money } from './money';
 import { activeEvents, realized, completed, pending, effects, balance, plannedSource, planTotal, canDeleteAccount, occurrenceLineId, linkableExpenses, savingGoals, freeSaving, defaultReserveInitial, sourceTotals, summary, totalUnallocated, accumulatedTotal } from './projections';
 import { newMonth } from './months';
-import { type FinancialAction, type Action, canonical } from './actions';
+import { type FinancialAction, type SavingEntry, type Action, canonical } from './actions';
 export { DomainError } from './validation';
 export * from './projections';
 export * from './months';
@@ -36,7 +36,7 @@ export function transact(state:State,action:Action,requestId:string):State {
   }
   const s=structuredClone(state), command=structuredClone(action);
   const m=s.months[s.selected];
-  if(!m)fail('MONTH','Mês selecionado inexistente.');
+  if(!m && command.type!=='month')fail('MONTH','Mês selecionado inexistente.');
   const sourceInfo=(source:string,destination=false)=>{
     const account=s.accounts.find(a=>aid(a.id)===source),reserve=s.reserves.find(r=>rid(r.id)===source);
     if(!account&&!reserve)fail(destination?'DESTINATION':'SOURCE',destination?'Escolha um destino válido.':'Escolha uma origem válida.');
@@ -83,8 +83,19 @@ export function transact(state:State,action:Action,requestId:string):State {
     }
     if(l.kind==='saving'&&(!l.reserveId||!a))fail('RESERVE','Escolha a poupança de destino e o banco de onde sai o reforço.');
   };
-  const voidEvent=(id:string)=>{const e=m.events.find(e=>e.id===id);if(!e||e.voided)fail('EVENT','Este registo já não está ativo.');e.voided=true;return e;};
-  const financial=(a:FinancialAction,correction?:Event,id=requestId)=>{
+  let reversalIndex=0;
+  const reverseEvent=(entry:Event)=>{
+    event({type:'reversal', reverses:entry.id, groupId:requestId, lineId:entry.lineId,
+      line:entry.line, amount:-entry.amount, date:entry.date, note:'Compensação',
+      deltas:Object.fromEntries(Object.entries(entry.deltas).map(([source,delta])=>[source,-delta]))},
+    `${requestId}:reversal:${reversalIndex++}`);
+  };
+  const activeEvent=(id:string)=>{
+    const entry=activeEvents(m).find(e=>e.id===id);
+    if(!entry)fail('EVENT','Este registo já não está ativo.');
+    return entry;
+  };
+  const financial=(a:Exclude<FinancialAction,SavingEntry>,correction?:Event,id=requestId)=>{
     amount(a.amount);validDate(a.date,m.period);sourceInfo(a.source);
     if(a.type==='reconcile'){
       const current=knownBalance(a.source);if(!a.note.trim())fail('NOTE','Indique o motivo da diferença.');
@@ -106,10 +117,11 @@ export function transact(state:State,action:Action,requestId:string):State {
       knownBalance(a.destination,'DESTINATION');
       event({amount:0,date:a.date,note:'Transferência própria (sem receita nem despesa)',type:'transfer',deltas:{[a.source]:-a.amount,[a.destination]:a.amount}},id);return;
     }
-    const currentLine=m.lines.find(l=>l.id===a.lineId);if(!currentLine)fail('LINE','Movimento não encontrado.');
-    const l=correction?.line??currentLine;
+    const l=correction?.line??m.lines.find(l=>l.id===a.lineId);if(!l)fail('LINE','Movimento não encontrado.');
     if(!correction&&completed(m,l.id))fail('COMPLETE','Este movimento está concluído. Anule o registo para corrigir.');
     if(typeof a.complete!=='boolean'||(a.total!==undefined&&typeof a.total!=='boolean'))fail('COMMAND','Confirmação inválida.');
+    if(a.remaining&&(!a.complete||a.total||a.includedInTotal||a.amount!==pending(m,l)))
+      fail('CONFLICT','O valor por realizar mudou. Reveja o movimento antes de confirmar.');
     const reserve=sourceInfo(a.source).reserve;
     if(l.kind==='income'&&reserve)fail('SOURCE','Recebimentos entram numa conta principal, não diretamente numa poupança.');
     if(l.kind==='investment'&&reserve)fail('SOURCE','O investimento sai de uma conta principal.');
@@ -158,6 +170,34 @@ export function transact(state:State,action:Action,requestId:string):State {
     if(l.kind==='saving')deltas[rid(l.reserveId!)]=n;
     event({lineId:l.id,line:l,amount:n,date:a.date,description:l.kind==='expense'&&!a.total?a.description?.trim()||undefined:undefined,note:a.total?'Ajuste conciliado do total acumulado':l.kind==='saving'?'Reforço de poupança':l.kind==='investment'?'Aplicação em investimento':l.kind==='income'?'Recebimento':'Pagamento / compra',type:a.total?'total':'execution',deltas,complete:a.complete,allocations,totalObservation},id);
   };
+  const saving=(entry:SavingEntry)=>{
+    const reserve=s.reserves.find(r=>r.id===entry.reserveId);
+    if(!reserve)fail('RESERVE','Escolha a poupança de destino.');
+    amount(entry.amount);validDate(entry.date,m.period);
+    if(entry.complete!==undefined&&typeof entry.complete!=='boolean')fail('COMMAND','Confirmação inválida.');
+    const goal=savingGoals(m,reserve.id).find(l=>l.id===entry.lineId);
+    const remaining=goal?pending(m,goal):0;
+    if((entry.lineId||entry.complete)&&(!goal||remaining===null||remaining===0))fail('GOAL','Escolha um objetivo do mês com montante por poupar.');
+    requireMovementAmount(entry.amount,entry.complete);
+    if(entry.amount===0){
+      applyInitials(entry.initials,[]);
+      event({lineId:goal!.id,amount:0,date:entry.date,note:'Objetivo do mês concluído sem novo reforço',type:'saving',deltas:{},complete:true,saving:{reserveId:reserve.id,extra:0}});
+      return;
+    }
+    const source=sourceInfo(entry.source).account;
+    if(!source||source.archived||source.restricted)fail('SOURCE','Escolha um banco ativo para o débito.');
+    const bank=aid(reserve.accountId),destination=rid(reserve.id);
+    if(sourceInfo(bank).account?.archived)fail('DESTINATION','O banco da poupança está arquivado.');
+    const portion=entry.complete?entry.amount:Math.min(entry.amount,remaining??0);
+    applyInitials(entry.initials,[entry.source,bank,destination]);
+    initializeReserve(reserve.id);
+    knownBalance(entry.source,'SOURCE');requireFunds(entry.source,entry.amount,'poupar');
+    knownBalance(destination,'DESTINATION');
+    const transferId=entry.source===bank?undefined:`${requestId}:transfer`;
+    if(transferId)financial({type:'transfer',source:entry.source,destination:bank,amount:entry.amount,date:entry.date},undefined,transferId);
+    event({lineId:goal?.id,amount:portion,date:entry.date,note:portion?'Reforço para o objetivo do mês':'Reforço extra',type:'saving',complete:entry.complete,
+      deltas:{[bank]:-entry.amount,[destination]:entry.amount},saving:{reserveId:reserve.id,extra:entry.amount-portion,transferId}});
+  };
   switch(command.type){
     case 'month': validPeriod(command.period);s.months[command.period]??=newMonth(s,command.period);s.selected=command.period;break;
     case 'snapshot':{
@@ -195,35 +235,7 @@ export function transact(state:State,action:Action,requestId:string):State {
       }
       break;
     }
-    case 'save':{
-      const reserve=s.reserves.find(r=>r.id===command.reserveId);
-      if(!reserve)fail('RESERVE','Escolha a poupança de destino.');
-      amount(command.amount);validDate(command.date,m.period);
-      if(command.complete!==undefined&&typeof command.complete!=='boolean')fail('COMMAND','Confirmação inválida.');
-      const goal=savingGoals(m,reserve.id).find(l=>l.id===command.lineId);
-      const remaining=goal?pending(m,goal):0;
-      if((command.lineId||command.complete)&&(!goal||remaining===null||remaining===0))fail('GOAL','Escolha um objetivo do mês com montante por poupar.');
-      requireMovementAmount(command.amount,command.complete);
-      if(command.amount===0){
-        applyInitials(command.initials,[]);
-        event({lineId:goal!.id,amount:0,date:command.date,note:'Objetivo do mês concluído sem novo reforço',type:'saving',deltas:{},complete:true});
-        break;
-      }
-      const source=sourceInfo(command.source).account;
-      if(!source||source.archived||source.restricted)fail('SOURCE','Escolha um banco ativo para o débito.');
-      const bank=aid(reserve.accountId),destination=rid(reserve.id);
-      if(sourceInfo(bank).account?.archived)fail('DESTINATION','O banco da poupança está arquivado.');
-      const portion=command.complete?command.amount:Math.min(command.amount,remaining??0);
-      applyInitials(command.initials,[command.source,bank,destination]);
-      initializeReserve(reserve.id);
-      knownBalance(command.source,'SOURCE');requireFunds(command.source,command.amount,'poupar');
-      knownBalance(destination,'DESTINATION');
-      const transferId=command.source===bank?undefined:`${requestId}:transfer`;
-      if(transferId)financial({type:'transfer',source:command.source,destination:bank,amount:command.amount,date:command.date},undefined,transferId);
-      event({lineId:goal?.id,amount:portion,date:command.date,note:portion?'Reforço para o objetivo do mês':'Reforço extra',type:'saving',complete:command.complete,
-        deltas:{[bank]:-command.amount,[destination]:command.amount},saving:{reserveId:reserve.id,extra:command.amount-portion,transferId}});
-      break;
-    }
+    case 'save':saving(command);break;
     case 'associateSaving':{
       const goal=m.lines.find(l=>l.id===command.lineId&&l.kind==='saving'&&l.reserveId);
       const parent=activeEvents(m).find(e=>e.id===command.eventId);
@@ -257,20 +269,30 @@ export function transact(state:State,action:Action,requestId:string):State {
       break;
     }
     case 'void':{
-      const entry=voidEvent(command.id);
+      const entry=activeEvent(command.id);
       const reinforcement=entry.saving?entry:activeEvents(m).find(e=>e.saving?.transferId===entry.id);
-      if(reinforcement&&reinforcement!==entry)voidEvent(reinforcement.id);
-      if(entry.saving?.transferId)voidEvent(entry.saving.transferId);
-      for(const e of activeEvents(m))if(e.savingParentId&&(e.savingParentId===entry.id||e.savingParentId===reinforcement?.id))voidEvent(e.id);
+      reverseEvent(entry);
+      if(reinforcement&&reinforcement!==entry)reverseEvent(reinforcement);
+      if(entry.saving?.transferId)reverseEvent(activeEvent(entry.saving.transferId));
+      for(const e of activeEvents(m))if(e.savingParentId&&(e.savingParentId===entry.id||e.savingParentId===reinforcement?.id))reverseEvent(e);
       break;
     }
     case 'correct':{
-      const old=voidEvent(command.id),a=command.replacement;
+      const old=activeEvent(command.id),a=command.replacement;
       if(activeEvents(m).some(e=>e.saving?.transferId===old.id||e.savingParentId===old.id))
         fail('DEPENDENCY','Anule a operação ligada ou a associação antes de corrigir este registo.');
-      const expected=a.type==='execute'?(a.includedInTotal?'detail':a.total?'total':'execution'):a.type==='reconcile'?'adjustment':'transfer';
+      const expected=a.type==='execute'?(a.includedInTotal?'detail':a.total?'total':'execution'):a.type==='reconcile'?'adjustment':a.type==='save'?'saving':'transfer';
       if(expected!==old.type||(a.type==='execute'&&a.lineId!==old.lineId))fail('CORRECTION','Uma correção preserva o tipo e a linha do registo.');
-      financial(a,old);const replacement=m.events.find(e=>e.id===requestId);if(!replacement)fail('CORRECTION','A correção deve criar um registo; use Anular para retirar o ajuste.');replacement.corrects=old.id;old.replacedBy=replacement.id;break;
+      reverseEvent(old);
+      if(a.type==='save'){
+        if(a.reserveId!==(old.saving?.reserveId??old.line?.reserveId)||a.lineId!==old.lineId)
+          fail('CORRECTION','A correção preserva a poupança e o objetivo do reforço.');
+        if(old.saving?.transferId)reverseEvent(activeEvent(old.saving.transferId));
+        saving(a);
+        const transfer=m.events.find(e=>e.id===`${requestId}:transfer`);
+        if(transfer)transfer.groupId=requestId;
+      }else financial(a,old);
+      const replacement=m.events.find(e=>e.id===requestId);if(!replacement)fail('CORRECTION','A correção deve criar um registo; use Anular para retirar o ajuste.');replacement.corrects=old.id;replacement.groupId=requestId;break;
     }
     case 'occurrence':{
       const o=m.occurrences.find(o=>o.id===command.id);if(!o||o.state!=='open')fail('OCCURRENCE','Este lembrete já foi tratado.');

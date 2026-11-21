@@ -5,16 +5,18 @@ import { accountFunding, transferRoutes } from '@/modules/finance/domain/funding
 import { money } from '@/modules/finance/domain/money';
 import { daysInMonth, DomainError, sum, validDate } from '@/modules/finance/domain/validation';
 import type { Account, Month } from '@/modules/finance/domain/model';
+import type {FinanceMemory} from '../client/draft';
 import type { Confirmed } from '../contracts/command';
 import { Dialog } from '../../../shared/ui/Dialog';
 import { Icon } from '../../../shared/ui/Icon';
 import { PaymentReasons } from './PaymentReasons';
+import { OutdatedNotice } from './MovementNotices';
 
 type Batch = Extract<Action,{type:'recordSuggestedTransfers'}>;
 interface Props {
-  month:Month;open:boolean;onOpenChange:(open:boolean)=>void;
+  memory:FinanceMemory;space:string;month:Month;open:boolean;onOpenChange:(open:boolean)=>void;
   report:ReturnType<typeof accountFunding>;
-  busy:boolean;uncertain:boolean;disabled:boolean;dateDefault:string;revision?:number;
+  busy:boolean;uncertain:boolean;disabled:boolean;dateDefault:string;revision?:number;outdated?:boolean;
   onPrepare:(account:Account,amount:number,source:Account,date:string)=>void;
   onRecord:(action:Batch,revision?:number)=>Promise<void>;
   refresh?:()=>Promise<Confirmed|false>;retry?:()=>Promise<void>;
@@ -36,10 +38,12 @@ export function AccountFunding(props:Props){
   </>;
 }
 
-function FundingReview({month,report,onOpenChange,busy,uncertain,disabled,dateDefault,revision,onPrepare,onRecord,refresh,retry}:Props){
+function FundingReview({memory,space,month,report,onOpenChange,busy,uncertain,disabled,dateDefault,revision,outdated,onPrepare,onRecord,refresh,retry}:Props){
   const current={period:month.period,revision,report};
-  const [review,setReview]=useState(current);
-  const [date,setDate]=useState(dateDefault);
+  const draft=memory.funding?.space===space&&memory.funding.period===month.period?memory.funding:undefined;
+  const [review,setReview]=useState(draft?.review??current);
+  const [date,setDate]=useState(draft?.date??dateDefault);
+  useEffect(()=>{memory.funding=busy||uncertain?undefined:{space,period:month.period,review,date};},[busy,uncertain,space,month.period,review,date,memory]);
   const [error,setError]=useState<{code:string;message:string}|null>(null);
   const [refreshing,setRefreshing]=useState(false);
   const dateInput=useRef<HTMLInputElement>(null);
@@ -54,9 +58,9 @@ function FundingReview({month,report,onOpenChange,busy,uncertain,disabled,dateDe
     const next=report.suggestions.find(route=>route.source.id===previous.source.id&&route.destination.id===previous.destination.id);
     return next&&next.amount!==previous.amount?[{previous,next}]:[];
   })[0];
-  const stale=changed||review.revision!==revision||error?.code==='CONFLICT'||error?.code==='BATCH_CHANGED';
+  const stale=changed||error?.code==='CONFLICT'||error?.code==='BATCH_CHANGED';
   const dateError=error?.code==='DATE';
-  const blocked=disabled||refreshing;
+  const blocked=disabled||refreshing||!!outdated;
   const close=()=>{if(!busy&&!refreshing)onOpenChange(false);};
   useEffect(()=>{
     if(stale&&!busy&&!uncertain)reviewAlert.current?.scrollIntoView({block:'nearest'});
@@ -100,6 +104,7 @@ function FundingReview({month,report,onOpenChange,busy,uncertain,disabled,dateDe
   }
   return <Dialog title="Quanto transferir para cada conta" onClose={close}>
     <div className="dialog-body funding-body">
+      {outdated&&<OutdatedNotice refresh={()=>void refresh?.()}/>}
       {stale&&!uncertain&&<div ref={reviewAlert} className="warning" role="alert">
         <p>{!sameMonth?'O mês mudou.':changed?'As origens, os destinos ou os montantes sugeridos mudaram desde a revisão.':error?.code==='CONFLICT'||error?.code==='BATCH_CHANGED'?error.message:'Os dados foram atualizados desde a revisão.'} A lista abaixo é a que reviu. Reveja a nova lista ou prepare individualmente o que já fez no banco.</p>
         {altered&&<p>{altered.next.source.name} → {altered.next.destination.name}: de {money(altered.previous.amount)} para {money(altered.next.amount)}.</p>}
@@ -140,7 +145,7 @@ function FundingReview({month,report,onOpenChange,busy,uncertain,disabled,dateDe
         <button className="button primary" disabled={blocked||stale}><Icon name="check" size={17}/>{routes.length===1?'Registar 1 transferência já efetuada':`Registar ${routes.length} transferências já efetuadas`}</button>
       </form>}
       {busy&&<p role="status">A confirmar gravação local…</p>}
-      {uncertain&&<div className="callout" role="alert"><p>Resposta por confirmar. Repita o pedido original para verificar a gravação.</p><button className="button" disabled={busy} onClick={async()=>{try{await retry?.();onOpenChange(false);}catch(e){await failed(e);}}}>Repetir confirmação</button></div>}
+      {uncertain&&<div className="callout" role="alert"><p>Resposta por confirmar. Consulte o resultado antes de iniciar outro registo.</p><button className="button" disabled={busy} onClick={async()=>{try{await retry?.();onOpenChange(false);}catch(e){await failed(e);}}}>Verificar confirmação</button></div>}
       {error&&!stale&&!dateError&&!uncertain&&<p className="form-error" role="alert">{error.message}</p>}
     </div>
     <div className="dialog-footer"><button className="button" disabled={busy||refreshing} onClick={close}>Fechar</button></div>

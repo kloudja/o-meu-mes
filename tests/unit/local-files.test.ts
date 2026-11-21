@@ -4,8 +4,9 @@ import { dirname, join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { expect, it, vi } from 'vitest';
 import { createBackup, restoreBackup } from '../../src/server/local-files.mjs';
-import { connect, migrate } from '../../src/server/storage.mjs';
-import { Repository } from '../../src/modules/finance/infrastructure/repository';
+import { migrateSynthetic as migrate } from '../migrate-synthetic';
+import { connect } from '../../src/server/storage.mjs';
+import { Repository } from '../legacy/repository';
 import { writeTestCatalog } from '../fixtures';
 
 vi.mock('node:fs', async importOriginal => {
@@ -74,7 +75,7 @@ it('recusa cópias ilegíveis, alheias, futuras e com relações quebradas, sem 
   try {
     db.exec('PRAGMA user_version=999');
     await expect(restoreBackup(backup.path, destination, source)).rejects.toThrow(/versão compatível/);
-    db.exec("PRAGMA user_version=3; INSERT INTO reserves VALUES ('broken','missing','{}')");
+    db.exec(`PRAGMA user_version=5; INSERT INTO reserves VALUES ('broken','missing','{}')`);
     await expect(restoreBackup(backup.path, destination, source)).rejects.toThrow(/referências inválidas/);
   } finally { db.close(); }
   expect(existsSync(destination)).toBe(false);
@@ -113,6 +114,7 @@ it('protege origem, caminho habitual, destinos existentes e públicos e permite 
   expect(readFileSync(backup.path)).toEqual(copied);
   expect(readFileSync(existing, 'utf8')).toBe('preservar');
   await restoreBackup(backup.path, destination, source);
-  expect(readFileSync(destination)).toEqual(copied);
+  const recovered = new DatabaseSync(destination, {readOnly:true});
+  try {expect(recovered.prepare('SELECT restored FROM identity_control').get()?.restored).toBe(1);} finally {recovered.close();}
   expect((await createBackup(source)).path).not.toBe(backup.path);
 });

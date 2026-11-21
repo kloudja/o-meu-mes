@@ -18,6 +18,16 @@ function sourceFiles(directory) {
 }
 
 function allowed(from, to) {
+  if (from.startsWith('modules/identity/ui/')) {
+    return (
+      to.startsWith('modules/identity/ui/') ||
+      to === 'modules/identity/contracts.ts' ||
+      to.startsWith('shared/')
+    );
+  }
+  if (from.startsWith('modules/identity/')) {
+    return !/^(app\/|shared\/ui\/|modules\/(finance\/|identity\/ui\/))/.test(to);
+  }
   if (from.startsWith('shared/i18n/')) return to.startsWith('shared/i18n/');
   if (from.startsWith('shared/')) return to.startsWith('shared/');
   if (from.startsWith('modules/finance/domain/')) {
@@ -45,7 +55,7 @@ for (const path of sourceFiles(root)) {
   for (const { fileName: specifier } of importedFiles) {
     if (!specifier.startsWith('.') && !specifier.startsWith('@/')) {
       const pure = /^(modules\/finance\/domain\/|shared\/i18n\/)/.test(from);
-      const client = /^(modules\/finance\/(ui|client)\/|shared\/ui\/)/.test(from);
+      const client = /^(modules\/finance\/(ui|client)\/|modules\/identity\/ui\/|shared\/ui\/)/.test(from);
       if (pure || (client && (isBuiltin(specifier) || specifier.startsWith('next/headers')))) {
         violations.add(`${from} → ${specifier}`);
       }

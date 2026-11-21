@@ -5,7 +5,7 @@ const dialog=(p:Page)=>p.getByRole('dialog');
 const errors=new WeakMap<Page,string[]>();
 test.beforeEach(async({page,openExamples})=>{const e:string[]=[];errors.set(page,e);page.on('pageerror',x=>e.push(x.message));page.on('console',x=>{
   // Business-rule failures surface as HTTP 422 on the persisted path.
-  const expectedValidation=x.location().url.endsWith('/api/state')&&x.text().startsWith('Failed to load resource: the server responded with a status of 422');
+  const expectedValidation=x.location().url.split('?')[0].endsWith('/api/state')&&x.text().startsWith('Failed to load resource: the server responded with a status of 422');
   if(x.type()==='error'&&!expectedValidation)e.push(x.text());
 });await openExamples(page);await expect(page.locator('.app-shell')).toHaveAttribute('data-ready','true');await goToScreen(page,'Plano e movimentos');});
 test.afterEach(async({page})=>{expect(errors.get(page)).toEqual([]);});

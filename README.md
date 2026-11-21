@@ -2,7 +2,13 @@
 
 Aplicação local em português de Portugal. **Fases 1–6 concluídas.** Inclui planeamento mensal, execução, persistência SQLite, backups, recuperação e exportação.
 
-## Abrir no Windows
+**MU5 entregue para verificação local com dados sintéticos.** O esquema v9 acrescenta eliminação cancelável, encerramento, direitos, exportação por espaço e recuperação em quarentena. Os resultados, os prazos e as instruções de reversão constam dos relatórios locais, excluídos da release pública. O âmbito está descrito nas especificações da [MU5](docs/multiutilizador/FASE_MU5.md) e da [MU4](docs/multiutilizador/FASE_MU4.md). `Iniciar.cmd` e `pnpm db:migrate` recusam a transição de esquemas anteriores na base diária antes de a abrir em SQLite. A utilização diária continua no endereço [127.0.0.1:3000](http://127.0.0.1:3000/) com o código correspondente à versão da base. A base diária fica em `data/o-meu-mes.sqlite` e a chave de identidade em `data/identity-key.dpapi`, protegida pelo perfil Windows que a criou.
+
+O avatar abre as definições da conta, onde é possível alterar a palavra-passe ou aceitar um convite. Os recibos de confirmações financeiras ficam no servidor. O histórico da MU3 mostra a autoria conhecida e permite corrigir um registo através de uma compensação e uma substituição gravadas em conjunto. `Restaurar.cmd` prepara a cópia recuperada num ficheiro separado em quarentena. A abertura de uma cópia recuperada exige o esquema compatível com o código usado. Especificações: [MU3](docs/multiutilizador/FASE_MU3.md) · [MU2](docs/multiutilizador/FASE_MU2.md) · [MU1](docs/multiutilizador/FASE_MU1.md).
+
+As secções seguintes documentam o funcionamento histórico da MU0.
+
+## Abrir no Windows com a MU0
 
 Abra `Iniciar.cmd` nesta pasta. O comando compila o código atual, prepara a base SQLite e abre a aplicação no endereço fixo [http://127.0.0.1:3000](http://127.0.0.1:3000/). Deixe a janela aberta. Para ver alterações de código, termine a instância com **Ctrl+C**, abra novamente `Iniciar.cmd` e atualize o separador. Se a porta estiver ocupada, o arranque pede que feche a instância existente.
 
@@ -87,4 +93,6 @@ Para investigar uma falha, abra **Actions → CI**, escolha a execução do comm
 
 ## Alojamento
 
-A CI verifica a build e termina após os testes. A aplicação corre localmente em [127.0.0.1:3000](http://127.0.0.1:3000/), onde o processo Node.js acede ao SQLite.
+A configuração de deployment está preparada para um VPS Linux com Docker e Caddy. A CI conserva os checks Windows, acrescenta build/testes Ubuntu e exercita uma imagem Linux amd64 antes de a transferir para o ambiente `production`. Os deployments são serializados e usam a mesma imagem validada, com SQLite persistente fora da imagem e snapshot antes de migrações. Um `git revert` não faz downgrade do esquema da base.
+
+O [guia de instalação e recuperação](docs/DEPLOYMENT.md) separa comandos PowerShell, Ubuntu e definições GitHub, incluindo acesso inicial restrito, chaves, bootstrap vazio, backup cifrado e exercícios de aceitação. A instalação e os ensaios reais continuam dependentes de autorização explícita. O fluxo Windows mantém [127.0.0.1:3000](http://127.0.0.1:3000/) e a sua base habitual.

@@ -1,0 +1,35 @@
+name: omeumes
+services:
+  app:
+    image: ${OMEUMES_IMAGE:?Set OMEUMES_IMAGE to the tested release}
+    pull_policy: never
+    platform: linux/amd64
+    init: true
+    user: '1000:1000'
+    restart: unless-stopped
+    stop_grace_period: 30s
+    env_file:
+      - /etc/omeumes/app.env
+    environment:
+      NODE_ENV: production
+      OMEUMES_RUNTIME: hosted
+      NEXT_TELEMETRY_DISABLED: '1'
+      TZ: Europe/Lisbon
+    ports:
+      - '127.0.0.1:3000:3000'
+    volumes:
+      - /var/lib/omeumes:/state
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=128m,uid=1000,gid=1000,mode=1770
+      - /app/.next/cache:rw,noexec,nosuid,size=64m,uid=1000,gid=1000,mode=0700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 2300m
+    cpus: 1.5
+    pids_limit: 192
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'

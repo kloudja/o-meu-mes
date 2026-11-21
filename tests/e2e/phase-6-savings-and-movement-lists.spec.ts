@@ -60,7 +60,7 @@ test('os cabeçalhos ordenam os movimentos e partilham a ordem com os filtros', 
   await expect(base.locator('.movement').first()).toHaveAttribute('data-testid', 'line-food');
 });
 
-test('a sobra de uma despesa pode ser registada como reforço extra e pesquisada em Poupanças',async({page,request,openExamples},info)=>{
+test('a sobra de uma despesa pode ser registada como reforço extra e pesquisada em Poupanças',async({page,finance,openExamples},info)=>{
   await page.setViewportSize({width:390,height:844});
   await openExamples(page);
   await goToScreen(page,'Plano e movimentos');
@@ -79,7 +79,7 @@ test('a sobra de uma despesa pode ser registada como reforço extra e pesquisada
   await expect(dialog.getByRole('heading',{name:'Poupar'})).toBeVisible();
   await expect(dialog.getByLabel('Montante (€)',{exact:true})).toHaveValue('25,00');
   await expect(dialog.getByLabel('Tipo de reforço')).toHaveValue('extra');
-  const before=await (await request.get('/api/state?period=2026-11')).json();
+  const before=await (await finance.read('2026-11')).json();
   expect(before.state.months['2026-11'].events).toHaveLength(1);
   await dialog.getByRole('button',{name:'Confirmar',exact:true}).click();
   await expect(dialog).toHaveCount(0);
@@ -97,13 +97,13 @@ test('a sobra de uma despesa pode ser registada como reforço extra e pesquisada
   await expect(search).toHaveValue('');
   await expect(search).toBeFocused();
   await expect(page.locator('.savings-card')).toHaveCount(3);
-  const {state}=await (await request.get('/api/state?period=2026-11')).json();
+  const {state}=await (await finance.read('2026-11')).json();
   expect(state.months['2026-11'].events.map((event:{deltas:Record<string,number>})=>event.deltas)).toEqual([
     {'a:act-r':-6000},{'a:act-r':-2500,'a:moey-r':2500},{'a:moey-r':-2500,'r:em':2500},
   ]);
 });
 
-test('uma despesa usa o saldo observado depois do pagamento e aparece no gasto da poupança', async ({ page, request, openExamples }) => {
+test('uma despesa usa o saldo observado depois do pagamento e aparece no gasto da poupança', async ({ page, finance, openExamples }) => {
   await openExamples(page);
   await goToScreen(page, 'Poupanças');
   const gas = page.locator('#reserve-gas');
@@ -158,14 +158,14 @@ test('uma despesa usa o saldo observado depois do pagamento e aparece no gasto d
   await goToScreen(page, 'Poupanças');
   await expect(gas.locator('.balance-value')).toHaveText(/44,75/);
   await expect(gas.getByText('Retirado este mês', { exact: true }).locator('..')).toContainText('15,25');
-  const { state }: { state: State } = await (await request.get('/api/state?period=2026-11')).json();
+  const { state }: { state: State } = await (await finance.read('2026-11')).json();
   const month = state.months['2026-11'];
   expect(month.initials['r:gas']).toBe(6000);
   expect(month.events).toHaveLength(1);
   expect(month.events[0].deltas).toEqual({ 'r:gas': -1525 });
 });
 
-test('o plano permite mudar o banco após um reforço parcial e fecha o objetivo cumprido', async ({ page, request, openExamples }, info) => {
+test('o plano permite mudar o banco após um reforço parcial e fecha o objetivo cumprido', async ({ page, finance, openExamples }, info) => {
   await openExamples(page);
   const dialog = page.getByRole('dialog');
   await goToScreen(page, 'Plano e movimentos');
@@ -200,7 +200,7 @@ test('o plano permite mudar o banco após um reforço parcial e fecha o objetivo
   await goal.getByRole('button', { name: 'Detalhe de Fundo Emergência' }).click();
   await expect(dialog.getByRole('button', { name: 'Poupar', exact: true })).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Fechar', exact: true }).click();
-  const { state }: { state: State } = await (await request.get('/api/state?period=2026-11')).json();
+  const { state }: { state: State } = await (await finance.read('2026-11')).json();
   const month = state.months['2026-11'];
   expect(month.events.map(event => event.deltas)).toEqual([
     { 'a:moey-r': -2000, 'r:em': 2000 },
@@ -219,7 +219,7 @@ for (const { amount, actual, deviation, cents, partial } of [
   { amount: '30', actual: '70,00', deviation: '-30,00', cents: 3000, partial: true },
   { amount: '115', actual: '115,00', deviation: '+15,00', cents: 11500, partial: false },
 ]) {
-  test(`concluir reforço do mês por ${amount} € preserva o plano e permite anular`, async ({ page, request, openExamples }, info) => {
+  test(`concluir reforço do mês por ${amount} € preserva o plano e permite anular`, async ({ page, finance, openExamples }, info) => {
     // Exercise the focus hand-off with slower rendering, as on a shared CI runner.
     const browser = await page.context().newCDPSession(page);
     await browser.send('Emulation.setCPUThrottlingRate', { rate: 6 });
@@ -260,17 +260,23 @@ for (const { amount, actual, deviation, cents, partial } of [
     await expect(detailValue('Falta poupar')).toContainText('0,00');
     await expect(detailValue('Desvio realizado face ao plano atual')).toContainText(deviation);
     const readEvents = async () => {
-      const { state }: { state: State } = await (await request.get('/api/state?period=2026-11')).json();
+      const { state }: { state: State } = await (await finance.read('2026-11')).json();
       return state.months['2026-11'].events;
     };
-    expect((await readEvents()).at(-1)).toMatchObject({
+    const original = (await readEvents()).at(-1)!;
+    expect(original).toMatchObject({
       type: 'saving', amount: cents, complete: true, saving: { extra: 0 },
       deltas: { 'a:moey-r': -cents, 'r:em': cents },
     });
     await dialog.getByRole('button', { name: 'Anular', exact: true }).last().click();
     await expect(detailValue('Falta poupar')).toContainText(partial ? '60,00' : '100,00');
     await expect(dialog.getByRole('button', { name: 'Poupar', exact: true })).toBeVisible();
-    expect((await readEvents()).at(-1)).toMatchObject({ voided: true });
+    const history = await readEvents();
+    expect(history.find(e => e.id === original.id)).toEqual(original);
+    expect(history.at(-1)).toMatchObject({
+      type: 'reversal', reverses: original.id, amount: -cents,
+      deltas: { 'a:moey-r': cents, 'r:em': -cents },
+    });
   });
 }
 

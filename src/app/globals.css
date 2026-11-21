@@ -207,7 +207,7 @@ html{font-family:var(--font)}
   background-color:#f0f3ef;color:#526359;opacity:1;cursor:default;
 }
 .dialog-body label select,.month-controls select{
-  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%23235f50' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-image:url('./select-arrow.svg');
   background-repeat:no-repeat;background-position:right 10px center;
 }
 .choice-toggle{position:absolute;right:1px;top:1px;bottom:1px;display:grid;place-items:center;width:44px;color:var(--green);border-radius:8px}
@@ -392,6 +392,13 @@ dialog .form-fields{display:contents}
 .dialog-body{min-height:0;overflow:auto;overscroll-behavior:contain;scroll-padding-block:12px}
 .dialog-footer{position:static;flex-wrap:wrap}
 .dialog-footer .button,.funding-confirm .button{white-space:normal;min-height:44px}
+.history .voided{opacity:1}
+.history-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:6px 12px}
+.duplicate-review .history small{font-size:12px;overflow-wrap:anywhere}
+@media(max-width:600px){
+  dialog[open]:has(.duplicate-review){width:calc(100% - 24px);height:fit-content;max-height:calc(100dvh - 24px);margin:auto;border:1px solid var(--line);border-radius:15px}
+  dialog .duplicate-review{flex:0 1 auto}
+}
 .dialog-body .funding-confirm{display:grid;flex:none;overflow:visible;gap:8px}
 .funding-outstanding:empty{display:none}
 .funding-outstanding .warning,.funding-body>.warning{margin:0 0 6px}

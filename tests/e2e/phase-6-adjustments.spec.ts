@@ -1,5 +1,5 @@
-import { expect, test } from './application';
-import type { APIRequestContext, Page } from '@playwright/test';
+import { expect, test, type FinanceApi } from './application';
+import type { Page } from '@playwright/test';
 import type { Action } from '../../src/modules/finance/domain/engine';
 import type { Confirmed } from '../../src/modules/finance/infrastructure/repository';
 import { goToScreen } from './navigation';
@@ -8,11 +8,10 @@ const period='2085-11',next='2085-12';
 const dialog=(page:Page)=>page.getByRole('dialog');
 const confirm=(page:Page)=>dialog(page).getByRole('button',{name:'Confirmar',exact:true});
 const capture=(page:Page,name:string)=>page.screenshot({path:test.info().outputPath(`fase-6-ajustes/${name}.png`),animations:'disabled'});
-const read=async(request:APIRequestContext,month=period):Promise<Confirmed>=>(await request.get('/api/state?period='+month)).json();
-async function send(request:APIRequestContext,action:Action,month=period){
-  const current=await read(request,month);
-  const response=await request.post('/api/state',{
-    data:{period:current.state.selected,revision:current.revision,requestId:crypto.randomUUID(),action}});
+const read=async(finance:FinanceApi,month=period):Promise<Confirmed>=>(await finance.read(month)).json();
+async function send(finance:FinanceApi,action:Action,month=period){
+  const current=action.type==='month'?await (await finance.read()).json():await read(finance,month);
+  const response=await finance.command({period:current.state.selected,revision:current.revision,requestId:crypto.randomUUID(),action});
   expect(response.ok(),await response.text()).toBe(true);
 }
 async function chooseBank(page:Page,label:string,name:string){
@@ -29,11 +28,11 @@ const saving=(page:Page)=>page.locator('#reserve-adjust-saving');
 const savingAmount=(page:Page,label:string)=>saving(page).locator('dl>div').filter({has:page.getByText(label,{exact:true})}).locator('dd');
 const noOverflow=async(page:Page)=>expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
 
-test('objetivo, reforço extra, associação, transferência e sugestão após recarga',async({page,request})=>{
-  await send(request,{type:'month',period});
-  await send(request,{type:'reserve',reserve:{id:'adjust-saving',name:'Poupança fictícia',accountId:'moey-r'}});
+test('objetivo, reforço extra, associação, transferência e sugestão após recarga',async({page,finance})=>{
+  await send(finance,{type:'month',period});
+  await send(finance,{type:'reserve',reserve:{id:'adjust-saving',name:'Poupança fictícia',accountId:'moey-r'}});
   for(const [source,amount] of [['a:act-r',50000],['a:moey-r',20000],['r:adjust-saving',10000]] as const){
-    await send(request,{type:'initial',source,amount});
+    await send(finance,{type:'initial',source,amount});
   }
   await openPeriod(page);
   await goToScreen(page,'Poupanças');
@@ -56,7 +55,7 @@ test('objetivo, reforço extra, associação, transferência e sugestão após r
   await confirm(page).dblclick();
   await expect(savingAmount(page,'Já poupado para o objetivo')).toContainText('40,00');
   await expect(savingAmount(page,'Falta poupar')).toContainText('60,00');
-  const eventTypes=(await read(request)).state.months[period].events.map(e=>e.type);
+  const eventTypes=(await read(finance)).state.months[period].events.map(e=>e.type);
   expect(eventTypes).toEqual(['transfer','saving']);
   await saving(page).getByRole('button',{name:'Poupar',exact:true}).click();
   await dialog(page).getByLabel('Montante (€)',{exact:true}).fill('75');
@@ -72,6 +71,7 @@ test('objetivo, reforço extra, associação, transferência e sugestão após r
   await reinforcement.selectOption({index:1});
   await dialog(page).getByLabel('Montante a associar (€)').fill('15');
   await confirm(page).click();
+  await expect(dialog(page)).toHaveCount(0);
   await openPeriod(page);
   await goToScreen(page,'Poupanças');
   await expect(savingAmount(page,'Já poupado para o objetivo')).toContainText('55,00');
@@ -84,7 +84,7 @@ test('objetivo, reforço extra, associação, transferência e sugestão após r
   await noOverflow(page);
   await capture(page,'poupanca-e-objetivo-390');
   await page.setViewportSize({width:1366,height:768});
-  const confirmed=(await read(request)).state.months[period];
+  const confirmed=(await read(finance)).state.months[period];
   expect(confirmed.events.slice(-2).map(e=>[e.type,e.deltas])).toEqual([
     ['saving',{'a:moey-r':-2000,'r:adjust-saving':2000}],['savingAssociation',{}]
   ]);
@@ -92,7 +92,7 @@ test('objetivo, reforço extra, associação, transferência e sugestão após r
   await expect(dialog(page).getByLabel('Quanto quer poupar este mês? (€)')).toHaveValue('100,00');
   await dialog(page).getByLabel('Quanto quer poupar este mês? (€)').fill('110');
   await confirm(page).click();
-  expect((await read(request)).state.months[period].lines.filter(l=>l.reserveId==='adjust-saving')).toHaveLength(1);
+  expect((await read(finance)).state.months[period].lines.filter(l=>l.reserveId==='adjust-saving')).toHaveLength(1);
   await page.getByRole('button',{name:'Novo mês'}).click();
   await dialog(page).getByLabel('Mês',{exact:true}).fill(next);
   await dialog(page).getByRole('button',{name:'Abrir mês'}).click();
@@ -102,7 +102,7 @@ test('objetivo, reforço extra, associação, transferência e sugestão após r
   const total=dialog(page).getByLabel('Total que vê hoje no banco (€)');
   await expect(total).toHaveValue('160,00');
   await expect(dialog(page)).toContainText('novembro de 2085');
-  expect((await read(request,next)).state.months[next].initials['r:adjust-saving']).toBeNull();
+  expect((await read(finance,next)).state.months[next].initials['r:adjust-saving']).toBeNull();
   await dialog(page).getByRole('button',{name:'Cancelar'}).click();
   await introduce.click();
   await total.fill('155');
@@ -112,18 +112,18 @@ test('objetivo, reforço extra, associação, transferência e sugestão após r
   await expect(dialog(page)).toContainText(/Diferença a registar: 3,00/);
   await confirm(page).click();
   await expect(saving(page).locator('.balance-value')).toContainText('158,00');
-  const newMonth=(await read(request,next)).state.months[next];
+  const newMonth=(await read(finance,next)).state.months[next];
   expect(newMonth.initials['r:adjust-saving']).toBe(15500);
   expect(newMonth.events.map(e=>[e.type,e.deltas])).toEqual([['adjustment',{'r:adjust-saving':300}]]);
 });
 
-test('criação e execução, filtro de poupanças e novo tipo com pagamentos em parcelas',async({page,request})=>{
+test('criação e execução, filtro de poupanças e novo tipo com pagamentos em parcelas',async({page,finance})=>{
   const month='2086-11';
-  await send(request,{type:'month',period:month});
-  await send(request,{type:'reserve',reserve:{id:'adjust-second',name:'Poupança de outro banco',accountId:'act-r'}},month);
-  await send(request,{type:'reserve',reserve:{id:'adjust-saving',name:'Poupança fictícia',accountId:'moey-r'}},month);
-  await send(request,{type:'initial',source:'a:act-r',amount:50000},month);
-  await send(request,{type:'initial',source:'a:moey-r',amount:20000},month);
+  await send(finance,{type:'month',period:month});
+  await send(finance,{type:'reserve',reserve:{id:'adjust-second',name:'Poupança de outro banco',accountId:'act-r'}},month);
+  await send(finance,{type:'reserve',reserve:{id:'adjust-saving',name:'Poupança fictícia',accountId:'moey-r'}},month);
+  await send(finance,{type:'initial',source:'a:act-r',amount:50000},month);
+  await send(finance,{type:'initial',source:'a:moey-r',amount:20000},month);
   await page.goto('/');
   await page.locator('.app-shell[data-ready="true"]').waitFor();
   await page.getByLabel('Mês selecionado').selectOption(month);
@@ -182,15 +182,16 @@ test('criação e execução, filtro de poupanças e novo tipo com pagamentos em
   await expect(banks.filter({hasText:'ActivoBank A'}).locator('.balance-value')).toContainText('505,00');
   await expect(banks.filter({hasText:'Moey! A'}).locator('.balance-value')).toContainText('130,00');
   await capture(page,'contas-1366');
-  expect((await read(request,month)).state.months[month].events.map(e=>[e.amount,e.deltas])).toEqual([
+  expect((await read(finance,month)).state.months[month].events.map(e=>[e.amount,e.deltas])).toEqual([
     [2000,{'a:moey-r':-2000}],[3000,{'a:act-r':-3000}],[5000,{'a:moey-r':-5000}],[3500,{'a:act-r':3500}]
   ]);
 });
 
-for(const width of [360,390,1366])test(`resumo em linha, navegação e temporizador de pagamento a ${width} px`,async({browser,baseURL,openExamples})=>{
+for(const width of [360,390,1366])test(`resumo em linha, navegação e temporizador de pagamento a ${width} px`,async({browser,baseURL,openExamples,loginSibling})=>{
   const context=await browser.newContext({baseURL,viewport:{width,height:width<700?844:768},hasTouch:width<700,
     isMobile:width<700,locale:'pt-PT',reducedMotion:width===360?'reduce':'no-preference'});
   try{
+    await loginSibling(context);
     const page=await context.newPage();
     await openExamples(page);
     await page.locator('.app-shell[data-ready="true"]').waitFor();

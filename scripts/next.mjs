@@ -5,9 +5,14 @@ import { fileURLToPath } from 'node:url';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { createHash } from 'node:crypto';
-import { databasePath, migrate } from '../src/server/storage.mjs';
+import { connect,databasePath, migrate } from '../src/server/storage.mjs';
 import { privatePath } from '../src/server/local-files.mjs';
+import { readWindowsAuthKey } from './windows-auth-key.mjs';
+import { databaseIsQuarantined } from '../src/server/local-files.mjs';
 import { lockDatabase } from './instance-lock.mjs';
+import { allowTransition, currentSchema, testTransitionAuthorized } from '../src/server/transition.mjs';
+import { settings } from '../src/modules/identity/policy.mjs';
+import { startBackgroundJobs } from '../src/server/background-jobs.mjs';
 let lock;
 const projectRoot=fileURLToPath(new URL('../',import.meta.url));
 process.env.OMEUMES_PROJECT_ROOT=projectRoot;
@@ -43,6 +48,16 @@ if(mode==='start'){
       if(!existsSync(path))throw new Error('A cópia indicada não existe. Verifique o caminho ou abra Restaurar.cmd.');
       env.OMEUMES_RECOVERY_SCOPE=createHash('sha256').update(path).digest('hex');
     } else path=privatePath(databasePath());
+    allowTransition(path, testTransitionAuthorized(), currentSchema, recovery);
+    if(recovery && !databaseIsQuarantined(path)){
+      const db=connect(path);
+      try{if(!db.prepare('SELECT 1 FROM privacy_control WHERE registered=1 AND released=1').get())throw new Error('A cópia de recuperação tem de estar em quarentena.');}
+      finally{db.close();}
+      delete env.OMEUMES_RECOVERY_SCOPE;
+      env.OMEUMES_RELEASED_PATH=path;
+    }
+    if(!testing && !env.OMEUMES_AUTH_KEY)env.OMEUMES_AUTH_KEY=readWindowsAuthKey(join(projectRoot,'data','identity-key.dpapi'));
+    const config=settings(env);
     lock=lockDatabase(path);
     env.OMEUMES_DB_PATH=path;
     if(!recovery)delete env.OMEUMES_RECOVERY_SCOPE;
@@ -52,8 +67,11 @@ if(mode==='start'){
       const build=spawnSync(process.execPath,[nextCli,'build'],{env,stdio:'inherit',windowsHide:true});
       if(build.status!==0){lock.close();process.exit(build.status??1);}
     }
-    const info=migrate(path);
+    const info=migrate(path, undefined, testTransitionAuthorized(), recovery);
     console.log(`SQLite ${info.sqlite}: esquema ${info.version} preparado.`);
+    if (!env.OMEUMES_RECOVERY_SCOPE) {
+      startBackgroundJobs(path,config);
+    }
   } catch(e) {
     lock?.close();
     console.error(`Não foi possível abrir ou preparar a base: ${path??process.env.OMEUMES_DB_PATH??'caminho habitual'}`);

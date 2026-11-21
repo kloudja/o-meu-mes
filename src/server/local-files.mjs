@@ -5,6 +5,7 @@ import {
 } from 'node:fs';
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path';
 import { backup, DatabaseSync } from 'node:sqlite';
+import { stampBackup } from './recovery-registry.mjs';
 import { APP_ID, databasePath, migrations } from './storage.mjs';
 
 export class LocalFileError extends Error {}
@@ -38,7 +39,14 @@ export function privatePath(path) {
   return canonical;
 }
 
-function verifyCopy(path) {
+export function databaseIsQuarantined(path) {
+  const db = new DatabaseSync(path, { readOnly: true });
+  try {
+    return db.prepare('SELECT restored FROM identity_control WHERE id=1').get()?.restored === 1;
+  } finally { db.close(); }
+}
+
+export function verifyCopy(path) {
   const db = new DatabaseSync(path, { readOnly: true, timeout: 1500 });
   try {
     db.exec('PRAGMA trusted_schema=OFF');
@@ -51,17 +59,19 @@ function verifyCopy(path) {
       throw new LocalFileError('Escolha uma cópia autónoma criada com «Criar backup».');
     }
     const schema = db => db.prepare('SELECT type, name, sql FROM sqlite_schema WHERE sql IS NOT NULL ORDER BY name').all();
-    const expected = new DatabaseSync(':memory:');
+    const expected = new DatabaseSync(':memory:', { enableForeignKeyConstraints: false });
     try {
       for (const migration of migrations.slice(0, version)) expected.exec(migration);
       if (JSON.stringify(schema(db)) !== JSON.stringify(schema(expected))) {
         throw new LocalFileError('A estrutura da cópia não corresponde à versão indicada.');
       }
     } finally { expected.close(); }
-    if (db.prepare('SELECT format FROM meta WHERE id=1').get()?.format !== 1 ||
-        !db.prepare('SELECT 1 FROM months LIMIT 1').get()) {
+    if (version < 6 && (db.prepare('SELECT format FROM meta WHERE id=1').get()?.format !== 1 ||
+        !db.prepare('SELECT 1 FROM months LIMIT 1').get())) {
       throw new LocalFileError('Faltam dados essenciais na cópia.');
     }
+    if (version >= 6 && db.prepare('SELECT id FROM spaces WHERE NOT EXISTS (SELECT 1 FROM meta WHERE space_id=spaces.id)').get())
+      throw new LocalFileError('Faltam definições do espaço.');
     const integrity = db.prepare('PRAGMA integrity_check').all();
     if (integrity.length !== 1 || integrity[0].integrity_check !== 'ok' ||
         db.prepare('PRAGMA foreign_key_check').all().length) {
@@ -102,13 +112,20 @@ export async function createBackup(path = databasePath(), options = {}) {
   if (!existsSync(/* turbopackIgnore: true */ source)) throw new LocalFileError('A base local não está disponível. Verifique o arranque.');
   const folder = privatePath(join(dirname(source), 'backups'));
   mkdirSync(folder, { recursive: true });
-  const started = new Date().toISOString().replaceAll(':', '-');
+  const captureTime=Date.now();
+  const started = new Date(captureTime).toISOString().replaceAll(':', '-');
   const destination = join(folder, `o-meu-mes-${started}-${randomUUID()}.sqlite`);
   await publishCopy(destination, async draft => {
     const db = new DatabaseSync(source, { readOnly: true, timeout: 1500 });
     try { await backup(db, draft, options); } finally { db.close(); }
     const copy = new DatabaseSync(draft, { timeout: 1500 });
-    try { copy.exec('PRAGMA journal_mode=DELETE'); } finally { copy.close(); }
+    try {
+      copy.exec('PRAGMA journal_mode=DELETE');
+      if(copy.prepare('PRAGMA user_version').get().user_version>=9)stampBackup(copy,source,captureTime);
+      if (copy.prepare('PRAGMA user_version').get().user_version >= 5) {
+        copy.exec('UPDATE identity_control SET restored=1 WHERE id=1');
+      }
+    } finally { copy.close(); }
   });
   return { path: destination, createdAt: new Date().toISOString() };
 }
@@ -133,6 +150,16 @@ export function recoveryPaths(source, destination, active = databasePath()) {
 
 export async function restoreBackup(source, destination, active = databasePath()) {
   const paths = recoveryPaths(source, destination, active);
-  await publishCopy(paths.destination, draft => copyFileSync(paths.source, draft));
+  await publishCopy(paths.destination, draft => {
+    copyFileSync(paths.source, draft);
+    verifyCopy(draft);
+    const db = new DatabaseSync(draft);
+    try {
+      if (db.prepare('PRAGMA user_version').get().user_version >= 5) {
+        // Credential changes after the backup cannot be inferred from this copy.
+        db.exec('UPDATE identity_control SET restored=1 WHERE id=1');
+      }
+    } finally { db.close(); }
+  });
   return paths;
 }

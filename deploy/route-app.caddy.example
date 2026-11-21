@@ -1,0 +1,10 @@
+# Store real hash locally in /etc/omeumes/route-app.caddy, root:caddy 0640.
+# This additional password restricts access during hosted acceptance checks.
+basic_auth {
+    verificacao REPLACE_WITH_CADDY_HASH
+}
+header Cache-Control "private, no-store"
+reverse_proxy 127.0.0.1:3000 {
+    # The app never consumes the temporary Caddy authentication header.
+    header_up -Authorization
+}

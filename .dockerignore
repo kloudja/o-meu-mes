@@ -1,0 +1,32 @@
+# Allow-list only. A local database, document, export or secret cannot enter context.
+**
+!package.json
+!pnpm-lock.yaml
+!pnpm-workspace.yaml
+!next.config.ts
+!tsconfig.json
+!postcss.config.mjs
+!src/
+!src/**
+!scripts/
+!scripts/next.mjs
+!scripts/windows-auth-key.mjs
+!scripts/instance-lock.mjs
+!scripts/hosted.mjs
+!scripts/hosted-recover.mjs
+!scripts/healthcheck.mjs
+!public/
+!public/**
+# Defence in depth, even if a private file is accidentally placed under src/public.
+**/.env
+**/.env.*
+**/*.local.json
+**/*.sqlite*
+**/*.db
+**/*.db-*
+**/*.pem
+**/*.key
+**/*.pfx
+**/*.p12
+**/*.xls*
+**/*.age
