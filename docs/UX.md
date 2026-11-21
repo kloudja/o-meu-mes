@@ -44,11 +44,11 @@ Datas recorrentes: usar o último dia do mês quando o dia de referência não e
 
 A estrutura, hierarquia, saldos no formulário de reforço, nome de compra e cartão dos orçamentos foram preservados. Ajustes mínimos exigidos pelo contrato: «Detalhar compra já incluída num total», escolha explícita do ajuste e origem, redução de total apenas na origem financiadora, valores desconhecidos propagados aos compromissos, nomes do snapshot visíveis e erros de origem no campo correto. Erros de anulação num histórico longo entram na área visível do diálogo. Conta arquivada continua disponível no pagamento de linhas que já a referenciam.
 
-Por pedido explícito do utilizador, o Cartão Refeição foi retirado da demonstração e dos textos da interface. Capturas e resultados desta etapa em `FASE_2_RESULTADOS.md`; os resultados anteriores ficam como registo histórico da fase 1. Mantém-se exclusivamente estado em memória.
+Por pedido explícito do utilizador, o Cartão Refeição foi retirado da demonstração e dos textos da interface. As capturas e os resultados desta etapa ficam no registo local de validação. Mantém-se exclusivamente estado em memória.
 
 ## Continuidade na fase 3 — 03/11/2026
 
-A estrutura e os fluxos das fases 1 e 2 mantêm-se. `/demo` identifica exemplos em memória; `/` identifica SQLite local e a falta de backup/restauro da fase 5. Carregamento, gravação em curso, sucesso após commit, erro e repetição de tentativa incerta são explícitos. Controlos de confirmação ficam bloqueados enquanto há gravação; conflitos mantêm os campos e atualizam o último estado confirmado. O formulário de reforço continua com iniciais no topo, zero explícito e confirmação conjunta. Os erros e a repetição são acessíveis no diálogo nativo, incluindo no móvel. Capturas e inspeção em `FASE_3_RESULTADOS.md`.
+A estrutura e os fluxos das fases 1 e 2 mantêm-se. `/demo` identifica exemplos em memória; `/` identifica SQLite local e a falta de backup/restauro da fase 5. Carregamento, gravação em curso, sucesso após commit, erro e repetição de tentativa incerta são explícitos. Controlos de confirmação ficam bloqueados enquanto há gravação; conflitos mantêm os campos e atualizam o último estado confirmado. O formulário de reforço continua com iniciais no topo, zero explícito e confirmação conjunta. Os erros e a repetição são acessíveis no diálogo nativo, incluindo no móvel. As capturas e a inspeção ficam no registo local de validação.
 
 ## Ajuste pedido em Contas — 03/11/2026
 
@@ -66,7 +66,7 @@ Na inspeção móvel, Pagar media 35 px de altura. Pagar/Registar, detalhe, anul
 
 O teste Shift+Tab no primeiro controlo de um diálogo reproduziu perda de foco para o navegador. O diálogo agora percorre circularmente os controlos habilitados nas duas direções; Escape e retorno ao elemento de abertura mantêm-se. O aviso por conta passou a explicar a necessidade de transferência sem pressupor que a disponibilidade global seja positiva.
 
-Nesta revisão foi feita a inspeção da interface e a regressão em desktop e a 360/390 px. A confirmação final do utilizador, em 11/11/2026, consta de `FASE_6_RESULTADOS.md`.
+Nesta revisão foi feita a inspeção da interface e a regressão em desktop e a 360/390 px. A confirmação final do utilizador, em 11/11/2026, consta do registo local de validação.
 
 
 ## Adaptação móvel doméstica — 05/11/2026

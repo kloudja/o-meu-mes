@@ -18,6 +18,8 @@ for (const width of [1366, 360, 390]) {
       const response = await finance.api.post('/api/local-files', {
         headers: finance.headers,
         params: { action, spaceId: finance.spaceId },
+        // Esta rota recusa sempre o pedido, sem efeitos; repetir apenas um ECONNRESET é seguro.
+        maxRetries: 1,
       });
       expect(response.status()).toBe(403);
       expect(response.headers()['cache-control']).toContain('no-store');

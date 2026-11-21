@@ -43,7 +43,7 @@ Usar o IPv4 nos comandos SSH: a consulta DNS de 21/11/2026 não encontrou `vps.o
 **Windows PowerShell:**
 
 ```powershell
-Set-Location 'C:\Users\rkd_s\Documents\Codex\O meu mês'
+Set-Location 'C:\caminho\para\o-meu-mes'
 scp -r .\deploy omeumes-admin@82.108.206.102:~/omeumes-deploy-review
 ssh omeumes-admin@82.108.206.102
 ```

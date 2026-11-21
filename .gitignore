@@ -65,3 +65,16 @@ references/private/
 /Preparar-Rede.cmd
 /scripts/import-november-excel.mjs
 /scripts/read-november-excel.py
+
+# Instruções para agentes e relatórios internos mantidos apenas na cópia local
+AGENTS.md
+SKILL.md
+/.codex/
+/.agents/
+/docs/*.local.md
+/docs/CONTAS_TRANSFERENCIAS.md
+/docs/**/*_RESULTADOS.md
+/docs/multiutilizador/FASE_MU*.md
+/docs/multiutilizador/MU6_*.md
+/docs/multiutilizador/REVISAO.md
+/docs/multiutilizador/README.md

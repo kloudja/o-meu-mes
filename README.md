@@ -2,9 +2,9 @@
 
 Aplicação local em português de Portugal. **Fases 1–6 concluídas.** Inclui planeamento mensal, execução, persistência SQLite, backups, recuperação e exportação.
 
-**MU5 entregue para verificação local com dados sintéticos.** O esquema v9 acrescenta eliminação cancelável, encerramento, direitos, exportação por espaço e recuperação em quarentena. Os resultados, os prazos e as instruções de reversão constam dos relatórios locais, excluídos da release pública. O âmbito está descrito nas especificações da [MU5](docs/multiutilizador/FASE_MU5.md) e da [MU4](docs/multiutilizador/FASE_MU4.md). `Iniciar.cmd` e `pnpm db:migrate` recusam a transição de esquemas anteriores na base diária antes de a abrir em SQLite. A utilização diária continua no endereço [127.0.0.1:3000](http://127.0.0.1:3000/) com o código correspondente à versão da base. A base diária fica em `data/o-meu-mes.sqlite` e a chave de identidade em `data/identity-key.dpapi`, protegida pelo perfil Windows que a criou.
+**MU5 entregue para verificação local com dados sintéticos.** O esquema v9 acrescenta eliminação cancelável, encerramento, direitos, exportação por espaço e recuperação em quarentena. O âmbito está descrito na documentação de [privacidade](docs/multiutilizador/PRIVACIDADE.md) e [segurança](docs/multiutilizador/SEGURANCA.md). `Iniciar.cmd` e `pnpm db:migrate` recusam a transição de esquemas anteriores na base diária antes de a abrir em SQLite. A utilização diária continua no endereço [127.0.0.1:3000](http://127.0.0.1:3000/) com o código correspondente à versão da base. A base diária fica em `data/o-meu-mes.sqlite` e a chave de identidade em `data/identity-key.dpapi`, protegida pelo perfil Windows que a criou.
 
-O avatar abre as definições da conta, onde é possível alterar a palavra-passe ou aceitar um convite. Os recibos de confirmações financeiras ficam no servidor. O histórico da MU3 mostra a autoria conhecida e permite corrigir um registo através de uma compensação e uma substituição gravadas em conjunto. `Restaurar.cmd` prepara a cópia recuperada num ficheiro separado em quarentena. A abertura de uma cópia recuperada exige o esquema compatível com o código usado. Especificações: [MU3](docs/multiutilizador/FASE_MU3.md) · [MU2](docs/multiutilizador/FASE_MU2.md) · [MU1](docs/multiutilizador/FASE_MU1.md).
+O avatar abre as definições da conta, onde é possível alterar a palavra-passe ou aceitar um convite. Os recibos de confirmações financeiras ficam no servidor. O histórico da MU3 mostra a autoria conhecida e permite corrigir um registo através de uma compensação e uma substituição gravadas em conjunto. `Restaurar.cmd` prepara a cópia recuperada num ficheiro separado em quarentena. A abertura de uma cópia recuperada exige o esquema compatível com o código usado. Consulte também a [arquitetura](docs/multiutilizador/ARQUITETURA.md) e a [matriz de aceitação](docs/multiutilizador/ACEITACAO.md).
 
 As secções seguintes documentam o funcionamento histórico da MU0.
 
@@ -12,7 +12,7 @@ As secções seguintes documentam o funcionamento histórico da MU0.
 
 Abra `Iniciar.cmd` nesta pasta. O comando compila o código atual, prepara a base SQLite e abre a aplicação no endereço fixo [http://127.0.0.1:3000](http://127.0.0.1:3000/). Deixe a janela aberta. Para ver alterações de código, termine a instância com **Ctrl+C**, abra novamente `Iniciar.cmd` e atualize o separador. Se a porta estiver ocupada, o arranque pede que feche a instância existente.
 
-Instale Node.js **24.22.1** e pnpm **11.25.0** e confirme que estão no PATH. `Iniciar.cmd` também procura Node no runtime local do Codex. Numa instalação nova, execute este comando na pasta do projeto e depois abra `Iniciar.cmd`.
+Instale Node.js **24.22.1** e pnpm **11.25.0** e confirme que estão no PATH. Numa instalação nova, execute este comando na pasta do projeto e depois abra `Iniciar.cmd`.
 
 ```powershell
 pnpm install --frozen-lockfile
@@ -61,9 +61,9 @@ Execução funciona antes de Guardar plano inicial. A referência guardada é im
 
 ## Rever alterações antes do commit
 
-Cada conversa é uma candidata a um commit. Use `git status --short` e `git diff` para rever as alterações. Depois de reiniciar com **Iniciar.cmd**, confira o resultado no endereço habitual e faça commit quando estiver satisfeito.
+Use `git status --short` e `git diff` para rever as alterações. Depois de reiniciar com **Iniciar.cmd**, confira o resultado no endereço habitual e faça commit quando estiver satisfeito.
 
-Para rejeitar uma alteração antes do commit, use `git restore --worktree -- <ficheiro>` no PowerShell, depois de confirmar que o ficheiro só contém alterações que quer descartar. Se o ficheiro também tiver trabalho anterior, use `git restore --patch -- <ficheiro>` para selecionar os trechos desta conversa. Remova ficheiros novos individualmente. O Git reverte código e documentação. Os registos financeiros feitos na aplicação continuam em SQLite.
+Para rejeitar uma alteração antes do commit, use `git restore --worktree -- <ficheiro>` no PowerShell, depois de confirmar que o ficheiro só contém alterações que quer descartar. Se o ficheiro também tiver trabalho anterior, use `git restore --patch -- <ficheiro>` para selecionar os trechos a descartar. Remova ficheiros novos individualmente. O Git reverte código e documentação. Os registos financeiros feitos na aplicação continuam em SQLite.
 
 ## Verificação automatizada
 
@@ -79,11 +79,11 @@ pnpm test:e2e
 
 O navegador verificado é Microsoft Edge no Windows. Se necessário, definir `$env:BROWSER_PATH = 'C:/caminho/para/o/navegador.exe'`.
 
-Consulte os [resultados da recuperação](docs/FASE_5_RESULTADOS.md) e as [regras do domínio](docs/DOMINIO_FINANCEIRO.md). As capturas, as instruções de rede e a configuração específica do PC ficam na cópia privada.
+Consulte o [guia de instalação e recuperação](docs/DEPLOYMENT.md) e as [regras do domínio](docs/DOMINIO_FINANCEIRO.md). As capturas, as instruções de rede e a configuração específica do PC ficam na cópia privada.
 
 ## GitHub Actions
 
-O workflow [CI](.github/workflows/ci.yml) corre em cada push para `master`. Também pode iniciá-lo em **Actions → CI → Run workflow**, depois de o ficheiro chegar ao ramo principal. Usa um runner Windows com Edge para cobrir também os scripts de arranque e restauro. Instala com `pnpm install --frozen-lockfile`, reutiliza a cache da pnpm e executa os comandos de verificação acima. A etapa `pnpm quality` verifica as fronteiras de módulos, a análise estática e a formatação. O mapa de módulos e o âmbito da formatação constam dos [resultados da MU0](docs/multiutilizador/FASE_MU0_RESULTADOS.md).
+O workflow [CI](.github/workflows/ci.yml) corre em cada push para `master`. Também pode iniciá-lo em **Actions → CI → Run workflow**, depois de o ficheiro chegar ao ramo principal. Usa runners Windows com Edge e Ubuntu com Chromium para cobrir a aplicação e os scripts de arranque e restauro. Instala com `pnpm install --frozen-lockfile`, reutiliza a cache da pnpm e executa os comandos de verificação acima. A etapa `pnpm quality` verifica as fronteiras de módulos, a análise estática e a formatação, definidas no [verificador de fronteiras](scripts/check-boundaries.mjs) e na [configuração Biome](biome.json).
 
 Configure `origin` com o URL completo do repositório, incluindo o nome da conta GitHub. Se `origin` já existir, use `git remote set-url origin <URL>`. Depois do primeiro push, confirme que `master` é o ramo predefinido. Se o separador **Actions** indicar que os workflows estão desativados, reveja **Settings → Actions → General** e permita as ações usadas pelo workflow.
 

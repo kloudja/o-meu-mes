@@ -62,7 +62,7 @@ Ocorrências por ID de definição e período. Lembretes e dispensas têm efeito
 
 ## Exemplos de aceitação
 
-85/85 → falta 0; 100/40 → falta 60; 85/92 concluído → excesso 7, falta 0; 85/80 concluído → desvio −5, falta 0. Snapshot 100, atual 120, execução 40 → inicial 100, falta 80. Nova linha 30 → inicial 0. Principal 1000/poupança 0, reforço 100 → 900/100; compra 40 → 900/60, despesa 40. Matriz, comandos efetivamente executados e revisão crítica em [FASE_2_RESULTADOS.md](FASE_2_RESULTADOS.md).
+85/85 → falta 0; 100/40 → falta 60; 85/92 concluído → excesso 7, falta 0; 85/80 concluído → desvio −5, falta 0. Snapshot 100, atual 120, execução 40 → inicial 100, falta 80. Nova linha 30 → inicial 0. Principal 1000/poupança 0, reforço 100 → 900/100; compra 40 → 900/60, despesa 40. Estes cenários têm cobertura nos testes financeiros em `tests/`.
 
 ## Integração da fase 3 — 03/11/2026
 

@@ -1,6 +1,6 @@
 # Matriz de aceitação e estratégia de verificação
 
-Estes são cenários a executar nas fases indicadas, não testes realizados nesta consolidação. Pessoas, nomes e valores abaixo são fictícios. A matriz complementa as regras de `../REQUISITOS.md` e AGENTS atuais; não substitui casos financeiros já existentes.
+Estes são cenários a executar nas fases indicadas, não testes realizados nesta consolidação. Pessoas, nomes e valores abaixo são fictícios. A matriz complementa as [regras do domínio financeiro](../DOMINIO_FINANCEIRO.md) e os casos financeiros já existentes.
 
 ## Estratégia comum
 
@@ -9,7 +9,7 @@ Estes são cenários a executar nas fases indicadas, não testes realizados nest
 - Concorrência: conexões/processos independentes com ordem controlável; verificar base após as duas intenções, não apenas mensagens HTTP.
 - Navegador: fluxos completos, dados persistidos, teclado/foco, estado vazio/erro/loading, desktop e mobile; não aceitar só snapshots de DOM.
 - Segurança: API direta com identidades/papéis distintos, IDs conhecidos de outros espaços, tokens expirados e dados malformados. Esconder botão não comprova autorização.
-- Visual/manual: inspecionar UI renderizada na instância/endereço previstos no AGENTS. Testes automatizados podem usar portas efémeras e fixtures; não criar demonstração manual separada. Evidências com dados reais não entram em artefactos públicos.
+- Visual/manual: no Windows, inspecionar a UI renderizada na instância habitual em `http://127.0.0.1:3000/`, aberta por `Iniciar.cmd`. Testes automatizados podem usar portas efémeras e fixtures; não criar demonstração manual separada. Evidências com dados reais não entram em artefactos públicos.
 - Registar comando, ambiente/versão, fixture, esperado, obtido, prova e limitação. Um cenário parcialmente executado continua parcial. Uma fase só declara revisão visual se a realizou.
 
 ## Cenários

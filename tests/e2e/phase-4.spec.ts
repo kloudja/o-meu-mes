@@ -18,7 +18,17 @@ async function openMonth(page:Page,period:string,double=false){
   await newMonth(page).click();
   await dialog(page).getByLabel('Mês',{exact:true}).fill(period);
   const open=dialog(page).getByRole('button',{name:'Abrir mês',exact:true});
-  if(double)await open.dblclick();else await open.click();
+  // A confirmação tem vários pedidos; o prazo da asserção visual começa depois da gravação.
+  const [saved]=await Promise.all([
+    page.waitForResponse(response=>{
+      const request=response.request();
+      if(request.method()!=='POST'||new URL(response.url()).pathname!=='/api/state')return false;
+      const command=request.postDataJSON();
+      return command.action?.type==='month'&&command.action.period===period;
+    }),
+    double?open.dblclick():open.click(),
+  ]);
+  expect(saved.ok(),await saved.text()).toBe(true);
   await expect(dialog(page)).toHaveCount(0);
   await expect(page.getByLabel('Mês selecionado')).toHaveValue(period);
 }
@@ -259,6 +269,15 @@ test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({pa
   await expect(definition).toContainText('Inativo');
   await expect(definition).toContainText('Reserva de teste');
   await expect(annual).toContainText('28/02/9995');
+  // Uma resposta lenta, dentro dos 15 s do cliente, não deve gastar o prazo da asserção visual.
+  await page.route('**/api/state?*',async route=>{
+    const request=route.request();
+    if(request.method()==='POST'&&request.postDataJSON().action?.period==='9997-02'){
+      const response=await route.fetch();
+      await new Promise(resolve=>setTimeout(resolve,6000));
+      await route.fulfill({response});
+    }else await route.continue();
+  });
   await openMonth(page,'9997-02');
   await expect(annual).toHaveCount(0);
 });
