@@ -68,6 +68,14 @@ try {
       });
       reason = 'identity HTTP ' + page.status;
       if (page.status !== 200) throw new Error();
+      reason = 'application request failed';
+      const entry = await requestLoopback(3000, '/', {
+        headers: { host: new URL(config.origin).host },
+      });
+      reason = 'application HTTP ' + entry.status;
+      if (entry.status !== 200) throw new Error();
+      reason = 'application page missing';
+      if (!/<div\b[^>]*class="auth-shell"/.test(entry.body)) throw new Error();
       response.writeHead(200, { 'Cache-Control': 'no-store' }).end('ready\n');
     } catch {
       response.writeHead(503, { 'Cache-Control': 'no-store' }).end('unavailable: ' + reason + '\n');

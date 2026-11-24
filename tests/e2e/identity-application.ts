@@ -9,6 +9,7 @@ import { createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { test as base } from '@playwright/test';
+import { requestLoopback } from '../../scripts/hosted-http.mjs';
 
 type Mail = { to: string; subject: string; text: string };
 export type Application = {
@@ -29,10 +30,11 @@ async function freePort() {
   return port;
 }
 
-export const test = base.extend<{ application: Application; testMailbox: boolean; rightsTest:boolean }>({
+export const test = base.extend<{ application: Application; testMailbox: boolean; rightsTest:boolean; applicationOrigin: string | undefined }>({
   testMailbox: [true, { option: true }],
   rightsTest:[false,{option:true}],
-  application: async ({ testMailbox,rightsTest }, use) => {
+  applicationOrigin: [undefined, { option: true }],
+  application: async ({ testMailbox,rightsTest,applicationOrigin }, use) => {
     const temp = resolve(tmpdir());
     const directory = await mkdtemp(join(temp, 'omeumes-test-mu2-browser-'));
     const database = join(directory, 'identity.sqlite');
@@ -52,7 +54,7 @@ export const test = base.extend<{ application: Application; testMailbox: boolean
         BREVO_API_KEY: undefined,
         BREVO_SENDER: undefined,
         OMEUMES_QA_GENERATED_PASSWORD: undefined,
-        OMEUMES_AUTH_ORIGIN: url,
+        OMEUMES_AUTH_ORIGIN: applicationOrigin ?? url,
         OMEUMES_AUTH_KEY: key.toString('base64'),
         OMEUMES_RIGHTS_HANDLER:rightsTest?handlerId:undefined,
         NEXT_TELEMETRY_DISABLED: '1',
@@ -70,8 +72,10 @@ export const test = base.extend<{ application: Application; testMailbox: boolean
     try {
       let ready = false;
       for (let attempt = 0; attempt < 150 && server.exitCode === null; attempt++) {
-        const response = await fetch(url + '/api/identity', { signal: AbortSignal.timeout(500) }).catch(() => null);
-        if (response?.ok) { ready = true; break; }
+        const response = await requestLoopback(port, '/api/identity', {
+          headers: { host: new URL(applicationOrigin ?? url).host }, timeout: 500,
+        }).catch(() => null);
+        if (response?.status === 200) { ready = true; break; }
         await new Promise(accept => setTimeout(accept, 100));
       }
       if (!ready) throw new Error('Arranque sintético indisponível. ' + diagnostic);

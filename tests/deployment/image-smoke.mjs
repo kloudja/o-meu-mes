@@ -103,6 +103,21 @@ try {
     0,
   );
   let app = await start();
+  const entry = await requestLoopback(app.port, '/', { headers: { host: 'omeumes.example.invalid' } });
+  assert.equal(entry.status, 200);
+  assert.match(
+    entry.body,
+    /<div\b[^>]*class="auth-shell"/,
+    'The image must render the application, not a streamed 404',
+  );
+  for (const match of [
+    entry.body.match(/<link[^>]+href="([^\"]+\.css(?:\?[^\"]*)?)"/),
+    entry.body.match(/<script[^>]+src="([^\"]+\.js(?:\?[^\"]*)?)"/),
+  ]) {
+    assert.ok(match, 'The application must reference its compiled CSS and JavaScript');
+    const asset = await requestLoopback(app.port, match[1], { headers: { host: 'omeumes.example.invalid' } });
+    assert.equal(asset.status, 200, 'Compiled asset unavailable: ' + match[1]);
+  }
   person = JSON.parse(
     docker(
       ['exec', '-i', app.id, 'node', '--input-type=module'],

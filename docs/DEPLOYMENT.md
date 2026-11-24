@@ -1,10 +1,30 @@
 # Alojamento de O meu mês
 
-Esta entrega prepara o deployment; não publica nem altera o VPS por si só. As outras fases do produto ficam suspensas durante esta tarefa. Commit, push, primeira instalação no VPS e exercícios reais exigem instrução explícita. O primeiro acesso alojado é restrito, com dados sintéticos. Os textos e condições de abertura pública identificados na MU6 continuam pendentes.
+**Estado em 24/11/2026:** primeiro deployment restrito concluído na [corrida 44942187836, tentativa 4](https://github.com/kloudja/o-meu-mes/actions/runs/44942187836), commit `42741b568413c5a0859fd1fa4a9655b24b4ffd44`. O log confirmou a imagem conferida, snapshot, preparação, prontidão e ativação válida da rota Caddy. A consulta externa HTTPS sem credenciais respondeu **401**, como previsto pela proteção adicional. Login, entrega real de email, registo financeiro pelo navegador e restauro no VPS ainda precisam da validação descrita abaixo.
+
+O acesso alojado continua restrito, inicialmente com dados sintéticos. As outras fases do produto mantêm-se fora desta tarefa. Commit, push, alterações no VPS e exercícios reais exigem instrução explícita. Os textos e condições de abertura pública identificados na MU6 continuam pendentes.
+
+**Verificação posterior do acesso:** a janela anónima do Brave apresentou as credenciais Caddy, mas depois mostrou 404. A página inicial ainda usava a regra antiga de acesso apenas por loopback. Esta revisão permite o Host da origem configurada e passa a verificar o HTML real da aplicação na prontidão e no teste da imagem. É necessária uma nova imagem desta revisão; a corrida antiga e um HTTP 200 isolado não comprovam a página funcional. Ver secção 5.3.
+
+## O que fazer agora
+
+1. Abrir [omeumes.pt](https://omeumes.pt). O primeiro pedido de credenciais é a proteção temporária do Caddy: utilizador `verificacao` do exemplo e a palavra-passe guardada durante a instalação. Depois aparece o acesso da própria aplicação, que tem credenciais independentes.
+2. Registar/entrar com uma conta controlada, confirmar a entrega do email e criar um espaço de teste vazio. Ensaiar saldo inicial 100,00 €, despesa 12,34 €, pagamento e recarga: uma despesa e saldo 87,66 €. Ver secção 6 para o percurso e evidência. Não importar a base Windows nem histórico para este teste.
+3. Antes de dados financeiros reais, completar o backup cifrado fora do servidor e o restauro verificado das secções 6–8. O snapshot automático pré-deploy fica no próprio VPS e não substitui uma cópia recuperável fora dele.
+4. Nas próximas alterações normais de código, o fluxo é revisão/testes locais → commit/push autorizado para `master` → acompanhar Actions → abrir a aplicação e confirmar os dados. **Não repetir `init`, bootstrap ou SCP da imagem.** A pipeline transfere a imagem e conserva os dados automaticamente. Alterações aos helpers root-owned, Compose ou Caddy são manutenção do host e continuam a exigir uma atualização explícita desses ficheiros.
+
+## Como usar este guia
+
+- **VPS atual:** começar pela secção anterior e pela validação da secção 6. A primeira instalação já terminou.
+- **Instalação nova:** secções 1–5. Não voltar a executar esses blocos sobre a instalação atual; incluem configuração inicial e geração de segredos.
+- **Diagnóstico dos erros já encontrados:** secções 5.1 e 5.2. Não são passos de rotina depois de um deployment bem-sucedido.
+- **Backup e recuperação:** secções 7–8. As operações que interrompem o serviço são exercícios explícitos.
+
+Esta versão inclui as correções de correspondência entre IDs de imagem, sintaxe Caddy anterior a 2.8, confirmação correta do rollback e acesso à página pelo domínio configurado. A verificação num servidor instalado não equivale a um novo ensaio integral de instalação numa máquina limpa; as pendências funcionais e de recuperação estão identificadas na secção 6.
 
 ## O que será executado
 
-`master` → testes Windows e Ubuntu → imagem Docker Linux amd64 → ensaio dessa imagem → artefacto imutável da corrida → SSH restrito → snapshot offline → preparação da base → arranque → prontidão → Caddy. Um erro nos checks impede o job de deployment. Não se recompila no VPS e não se usa uma etiqueta `latest`. A transferência confere SHA-256 do arquivo e ID da imagem. A base Node está fixada por digest; atualizar Node implica alterar ambos os `FROM` e repetir os checks.
+`master` → testes Windows e Ubuntu → imagem Docker Linux amd64 → ensaio dessa imagem → artefacto imutável da corrida → SSH restrito → snapshot offline → preparação da base → arranque → prontidão → Caddy. Um erro nos checks impede o job de deployment. Não se recompila no VPS e não se usa uma etiqueta `latest`. A transferência confere SHA-256 do arquivo e a identidade da imagem selecionada. Docker clássico pode reportar o digest da configuração, enquanto o armazenamento containerd pode reportar o digest do manifesto ou índice. O helper verifica a ligação entre esses digests no arquivo conferido e fixa a release pelo ID local do VPS. A base Node está fixada por digest; atualizar Node implica alterar ambos os `FROM` e repetir os checks.
 
 O endereço Windows continua a ser `http://127.0.0.1:3000/`, através de `Iniciar.cmd`, com a sua base e chave DPAPI. Não copiar a pasta `data`, backups, Excel ou a chave Windows para o servidor. A imagem admite apenas código/configuração de build através de `.dockerignore`; não recebe documentos, testes nem segredos. As dependências nativas são instaladas em Linux. `hosted.mjs` usa o mesmo worker de email, limpeza e rotação do launcher Windows.
 
@@ -38,6 +58,8 @@ Confirmar que o índice não contém dados, exportações, segredos, capturas pr
 
 ## 2. Preparar ficheiros do VPS (apenas após autorização)
 
+Usar a mesma autenticação pessoal que já permite entrar como `omeumes-admin`, incluindo a opção `-i` ou o agente necessário. A chave de `omeumes-deploy` pertence à pipeline e não permite SCP. Se surgir `Permission denied (publickey)`, resolver esse acesso antes de continuar; um SHA impresso posteriormente não confirma que houve transferência.
+
 Usar o IPv4 nos comandos SSH: a consulta DNS de 21/11/2026 não encontrou `vps.omeumes.pt`. O hostname do servidor não cria um registo DNS. A aplicação continua em `https://omeumes.pt`; não é necessário alterar DNS para este percurso.
 
 **Windows PowerShell:**
@@ -59,7 +81,12 @@ sudo install -o root -g root -m 0644 ~/omeumes-deploy-review/compose.yaml /opt/o
 sudo install -o root -g root -m 0755 ~/omeumes-deploy-review/omeumes-deploy.sh /usr/local/sbin/omeumes-deploy
 sudo install -o root -g root -m 0755 ~/omeumes-deploy-review/omeumes-backup.sh /usr/local/sbin/omeumes-backup
 sudo install -o root -g root -m 0755 ~/omeumes-deploy-review/ssh-receive.sh /usr/local/libexec/omeumes-ssh-receive
-sudo install -o root -g root -m 0600 ~/omeumes-deploy-review/app.env.example /etc/omeumes/app.env
+sudo install -o root -g root -m 0755 ~/omeumes-deploy-review/image-identity.py /usr/local/libexec/omeumes-image-identity.py
+if sudo test -e /etc/omeumes/app.env; then
+  echo 'app.env já existe; conservar a configuração e as chaves existentes.'
+else
+  sudo install -o root -g root -m 0600 ~/omeumes-deploy-review/app.env.example /etc/omeumes/app.env
+fi
 ```
 
 Gerar as duas chaves **uma única vez**, sem as mostrar. Este comando recusa repetir a geração. Guardar cópia cifrada fora do VPS antes de usar dados reais.
@@ -84,9 +111,13 @@ No editor privado, substituir apenas os placeholders Brevo por uma API key trans
 ### Caddy: conservar a manutenção até à prontidão
 
 ```bash
-sudo cp -a /etc/caddy/Caddyfile /etc/caddy/Caddyfile.before-omeumes
+sudo cp -an /etc/caddy/Caddyfile /etc/caddy/Caddyfile.before-omeumes
 sudo install -o root -g caddy -m 0640 ~/omeumes-deploy-review/route-maintenance.caddy /etc/omeumes/route-maintenance.caddy
-sudo install -o root -g caddy -m 0640 ~/omeumes-deploy-review/route-app.caddy.example /etc/omeumes/route-app.caddy
+if sudo test -e /etc/omeumes/route-app.caddy; then
+  echo 'route-app.caddy já existe; conservar o hash da palavra-passe configurada.'
+else
+  sudo install -o root -g caddy -m 0640 ~/omeumes-deploy-review/route-app.caddy.example /etc/omeumes/route-app.caddy
+fi
 sudo install -o root -g caddy -m 0640 /etc/omeumes/route-maintenance.caddy /etc/caddy/omeumes-route.caddy
 caddy hash-password
 sudo nano /etc/omeumes/route-app.caddy
@@ -94,6 +125,8 @@ sudo nano /etc/caddy/Caddyfile
 ```
 
 `caddy hash-password` pede a palavra-passe no terminal. Guardar a palavra-passe no gestor e colocar o hash no ficheiro `route-app.caddy`, em vez de `REPLACE_WITH_CADDY_HASH`. No `Caddyfile`, conservar outras configurações existentes e substituir só o conteúdo do bloco `omeumes.pt` por `import /etc/caddy/omeumes-route.caddy`; ver o exemplo `deploy/Caddyfile`. Não importar já a rota da aplicação.
+
+O exemplo usa `basicauth`, reconhecido pelo Caddy anterior a 2.8 e também pelas versões mais recentes verificadas. A documentação atual chama-lhe `basic_auth`; esse nome novo é rejeitado por versões antigas. Confirmar a versão com `caddy version`. Não substituir o ficheiro real por um exemplo sem o hash configurado. Ver a secção 5.2 se o deployment falhar com `unrecognized directive: basic_auth`.
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -217,18 +250,23 @@ Depois do commit/push autorizado, acompanhar os checks. Não executar comandos d
 gh run list --repo kloudja/o-meu-mes --workflow ci.yml --limit 5
 $runId = Read-Host 'Número da corrida aprovada'
 $releaseSha = gh run view $runId --repo kloudja/o-meu-mes --json headSha --jq .headSha
+if ($LASTEXITCODE -ne 0 -or $releaseSha -cnotmatch '^[0-9a-f]{40}$') { throw 'Não foi possível obter o commit Git da corrida.' }
 $artifactDir = Join-Path $env:TEMP "omeumes-release-$runId"
 gh run download $runId --repo kloudja/o-meu-mes --name "linux-image-$releaseSha" --dir $artifactDir
+if ($LASTEXITCODE -ne 0) { throw 'Download falhou; não continuar.' }
 Get-FileHash (Join-Path $artifactDir 'image.tar.gz') -Algorithm SHA256
 scp (Join-Path $artifactDir 'image.tar.gz') omeumes-admin@82.108.206.102:~/omeumes-first-image.tar.gz
+if ($LASTEXITCODE -ne 0) { throw 'Transferência falhou; não continuar no VPS.' }
 Write-Output $releaseSha
 ```
 
-**Ubuntu, por SSH**, usar o mesmo SHA e conferir o hash do arquivo com o do Windows:
+**Ubuntu, por SSH**, usar o **commit Git de 40 caracteres** impresso no último comando Windows; não usar o checksum SHA-256 do arquivo, que tem 64 caracteres. Conferir também esse checksum com o do Windows. O bloco usa uma subshell para uma entrada inválida não fechar a sessão SSH:
 
 ```bash
-read -r -p 'SHA completo da release aprovada: ' release_sha
-[[ "$release_sha" =~ ^[0-9a-f]{40}$ ]] || exit 1
+(
+set -euo pipefail
+read -r -p 'Commit Git aprovado (40 caracteres, não o checksum do arquivo): ' release_sha
+[[ "$release_sha" =~ ^[0-9a-f]{40}$ ]] || { echo 'Commit Git inválido.' >&2; exit 1; }
 sha256sum ~/omeumes-first-image.tar.gz
 gzip -dc ~/omeumes-first-image.tar.gz | sudo docker load
 image_id=$(sudo docker image inspect "omeumes:$release_sha" --format '{{.Id}}')
@@ -238,15 +276,130 @@ sudo chmod 0600 /etc/omeumes/release.env
 sudo docker compose --env-file /etc/omeumes/release.env -f /opt/omeumes/compose.yaml config --quiet
 sudo docker compose --env-file /etc/omeumes/release.env -f /opt/omeumes/compose.yaml run --rm --no-deps -T app node scripts/hosted.mjs init
 curl -I https://omeumes.pt
+)
 ```
 
 `init` cria esquema completo vazio e autoridade independente, sem contas, categorias, meses, movimentos ou utilizadores. Não é uma migração da base Windows. Repetir `init` recusa substituir os ficheiros. Não usar `OMEUMES_TEST_TRANSITION` nem fixtures em produção. Se houver falha parcial, preservar os ficheiros e investigar; não apagar/reinicializar uma base para ultrapassar o erro.
 
 Depois de instalar os secrets, autorizar a repetição do job `deploy` dessa corrida (interface Actions → Re-run failed jobs, ou `gh run rerun $runId --failed --repo kloudja/o-meu-mes`). O helper mantém 503, para a instância, guarda o par base/autoridade e configuração, executa `prepare`, inicia a imagem e testa prontidão. Só depois instala a rota com password adicional. A prontidão exige SQLite íntegra/esquema exato, escrita disponível, autoridade e chave corretas, base fora de quarentena, Next a responder e worker com ciclo concluído. Não prova entrega Brevo nem substitui o ensaio no navegador.
 
-## 6. Aceitação alojada — evidência obrigatória, ainda por executar
+### 5.1. Falha após «Loaded image»: IDs de Docker clássico e containerd
 
-1. **Primeira release:** sem password Caddy, obter 401; com password, abrir a aplicação em HTTPS. Verificar cookie `__Host-omeumes` Secure/HttpOnly, registar uma conta controlada de teste, confirmar o email real Brevo e criar um espaço vazio. Usar apenas nomes/valores sintéticos. Criar banco fictício com saldo 100,00 €, despesa prevista 12,34 € e pagar 12,34 €. Recarregar: uma despesa e saldo 87,66 €. Registar SHA e ID em `/etc/omeumes/deployed`, resultado de `compose exec -T app node scripts/healthcheck.mjs`, screenshot sem segredos e entrega do email. Não guardar palavras-passe ou tokens no relatório público.
+Se o arquivo tem o SHA-256 esperado mas o deployment termina imediatamente depois de `Loaded image`, a versão antiga do helper pode estar a comparar um digest de configuração do runner com um digest de manifesto do VPS. O bootstrap pode estar concluído e o 503 continuar a ser a manutenção prevista. Não repetir `init`, não trocar a base, não alterar os hashes da pipeline nem desativar a conferência do arquivo.
+
+A correção tem de ser instalada no **host**, porque uma imagem nova não substitui os scripts root-owned. Os comandos seguintes atualizam apenas os dois helpers e guardam a versão anterior do script. Usar a autenticação SSH pessoal já funcional; se exige uma opção `-i`, aplicá-la também a `scp`.
+
+**Ubuntu, na sessão pessoal:**
+
+```bash
+mkdir -p ~/omeumes-image-identity-fix
+```
+
+**Windows PowerShell, na raiz deste projeto:**
+
+```powershell
+scp .\deploy\omeumes-deploy.sh .\deploy\image-identity.py omeumes-admin@82.108.206.102:~/omeumes-image-identity-fix/
+if ($LASTEXITCODE -ne 0) { throw 'Transferência falhou; não continuar no VPS.' }
+```
+
+**Ubuntu, depois da transferência bem-sucedida:**
+
+```bash
+(
+  set -euo pipefail
+  cd ~/omeumes-image-identity-fix
+  bash -n omeumes-deploy.sh
+  printf '%s  %s\n' \
+    8b07025b4365a5756c55c85484ab86598de1aa59d88cdccef8c20de9827a5e44 \
+    "$HOME/omeumes-first-image.tar.gz" | sha256sum --check
+  python3 image-identity.py \
+    ~/omeumes-first-image.tar.gz \
+    omeumes:42741b568413c5a0859fd1fa4a9655b24b4ffd44 \
+    sha256:be1247b87250b8eab7c271b4c604d28005e5d66c50f0c0d271c704f00abdb57f \
+    "$(sudo docker image inspect omeumes:42741b568413c5a0859fd1fa4a9655b24b4ffd44 --format '{{.Id}}')"
+  sudo cp -an /usr/local/sbin/omeumes-deploy /usr/local/sbin/omeumes-deploy.before-image-identity
+  sudo install -o root -g root -m 0755 image-identity.py /usr/local/libexec/omeumes-image-identity.py
+  sudo install -o root -g root -m 0755 omeumes-deploy.sh /usr/local/sbin/omeumes-deploy
+)
+```
+
+O exemplo de verificação usa a release e o arquivo observados nesta instalação; para outra release, usar a respetiva etiqueta e ID da CI. O verificador lê metadados sem extrair ficheiros, confirma os seus SHA-256 e só admite os digests ligados à configuração linux/amd64 da etiqueta pedida. O script principal confere sempre o SHA-256 do arquivo antes de `docker load` e dessa verificação. Python 3 é necessário no host, tal como no bootstrap.
+
+Depois desta atualização autorizada, repetir **apenas o job falhado** da mesma corrida. A correção aceita os outputs antigos da CI; não é necessário reconstruir a imagem para esta corrida. Não executar `init` novamente. Uma nova falha de identidade apresenta os IDs recebido/carregado e as identidades verificadas antes de alterar a rota, parar a aplicação ou executar `prepare`.
+
+Para desfazer só a atualização do host, reinstalar a cópia `omeumes-deploy.before-image-identity` em `/usr/local/sbin/omeumes-deploy` com proprietário root e modo 0755. O helper Python novo pode ficar sem uso. Isto não repõe dados, imagens, rotas ou configuração de aplicação.
+
+Referências: [armazenamento containerd do Docker](https://docs.docker.com/engine/storage/containerd/) e [implementação de inspeção no Moby](https://github.com/moby/moby/blob/master/daemon/containerd/image_inspect.go).
+
+### 5.2. «unrecognized directive: basic_auth» e recuperação da manutenção
+
+O nome `basic_auth` surgiu no Caddy 2.8; versões anteriores usam `basicauth`. A rota do exemplo foi ajustada para a grafia compatível. Um 503 inicial de prontidão pode ser transitório enquanto o supervisor arranca; se o log chega à ativação da rota Caddy, essa espera já terminou com sucesso. A falha aqui é de adaptação do Caddyfile.
+
+**Ubuntu, na sessão pessoal do VPS**, corrigir apenas a palavra da diretiva, conservando o nome e hash reais. O bloco corre numa subshell e não fecha a sessão SSH em caso de erro. Guarda as configurações anteriores e repõe manutenção validada antes de recarregar/iniciar o Caddy:
+
+```bash
+(
+  set -euo pipefail
+  caddy version
+  sudo cp -an /etc/omeumes/route-app.caddy /etc/omeumes/route-app.caddy.before-auth-name
+  sudo cp -an /etc/caddy/omeumes-route.caddy /etc/caddy/omeumes-route.caddy.before-auth-name
+  sudo sed -i -E 's/^([[:space:]]*)basic_auth([[:space:]]*\{)/\1basicauth\2/' /etc/omeumes/route-app.caddy
+  sudo install -o root -g caddy -m 0640 /etc/omeumes/route-maintenance.caddy /etc/caddy/omeumes-route.caddy
+  sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+  if sudo systemctl is-active --quiet caddy; then
+    sudo systemctl reload caddy
+  else
+    sudo systemctl start caddy
+  fi
+  curl -I https://omeumes.pt
+)
+```
+
+O endereço deve voltar a responder 503 de manutenção nesta etapa. Não voltar a executar `init`. Para reverter só o nome da diretiva, repor a cópia `route-app.caddy.before-auth-name`; isso volta a exigir uma versão que aceite `basic_auth`. Não repor automaticamente o ficheiro ativo anterior, porque pode conter a configuração que não valida.
+
+O script de deployment foi também corrigido: `route` interrompe antes de reload se a instalação ou validação falhar, mesmo quando Bash desativa implicitamente `errexit` num contexto condicional. O rollback só anuncia `Previous image resumed` depois de prontidão **e** ativação válida da rota. Se esta falhar, tenta manutenção; se a própria manutenção falhar, informa essa falha. A versão antiga podia imprimir sucesso apesar do erro de Caddy observado no log.
+
+Para instalar só essa correção do script no host, depois de o Caddy estar novamente em manutenção:
+
+**Windows PowerShell, na raiz do projeto:**
+
+```powershell
+scp .\deploy\omeumes-deploy.sh omeumes-admin@82.108.206.102:~/omeumes-deploy-caddy-fix.sh
+if ($LASTEXITCODE -ne 0) { throw 'Transferência falhou; não continuar no VPS.' }
+```
+
+**Ubuntu:**
+
+```bash
+(
+  set -euo pipefail
+  bash -n ~/omeumes-deploy-caddy-fix.sh
+  sudo cp -an /usr/local/sbin/omeumes-deploy /usr/local/sbin/omeumes-deploy.before-caddy-fix
+  sudo install -o root -g root -m 0755 ~/omeumes-deploy-caddy-fix.sh /usr/local/sbin/omeumes-deploy
+)
+```
+
+O script local conserva a correção de identidade da secção 5.1; o helper Python dessa secção tem de estar instalado. Depois da correção da diretiva e instalação autorizada do script, repetir só o job falhado da corrida existente. Não requer reconstrução da imagem nem alteração de dados. Para desfazer apenas o script, reinstalar `omeumes-deploy.before-caddy-fix` com proprietário root e modo 0755.
+
+[Diretiva na documentação oficial do Caddy](https://caddyserver.com/docs/caddyfile/directives/basic_auth).
+
+### 5.3. Credenciais aceites mas página 404
+
+Na instalação observada, o Brave no perfil normal não apresentou o pedido de credenciais; a janela anónima apresentou-o. Isto permite continuar o diagnóstico do acesso nesse contexto, mas não identifica por si só a causa no perfil normal.
+
+O 404 depois das credenciais era uma falha da aplicação: `src/app/page.tsx` usava `localAccess`, que só aceita localhost/127.0.0.1. A página passa a usar `applicationAccess` com o Host exato de `OMEUMES_AUTH_ORIGIN`, incluindo a porta. Sem origem configurada mantém a regra local; origens inválidas e domínios diferentes continuam recusados. Os cabeçalhos forwarded não concedem acesso. A regra de escrita local não foi alterada, e as APIs mantêm os seus controlos de origem e sessão.
+
+O [Next.js pode devolver HTTP 200 quando mostra uma página not-found depois de começar o streaming](https://nextjs.org/docs/app/api-reference/file-conventions/not-found). Por isso, o `curl` que apenas imprime o estado não chega para aceitar a página. A prontidão desta revisão exige a estrutura HTML da aplicação, além da API de identidade. O teste da imagem exige também CSS e JavaScript acessíveis. O teste de navegador usa o domínio HTTPS sintético configurado e confirma o formulário Entrar após recarga, sem contactar o VPS ou fornecedores externos.
+
+Esta correção é código da aplicação e da imagem. Depois de revisão e commit/push autorizados, deixar a CI construir, verificar e fazer deployment da nova imagem. Não executar `init`, não voltar a copiar a imagem à mão e não reinstalar os helpers do host por causa desta correção. Depois do deployment, confirmar no navegador autenticado que aparece o formulário **Entrar**, sem aceitar apenas o estado verde da corrida antiga.
+
+## 6. Validação depois do primeiro deployment
+
+Em 24/11/2026, deployment, prontidão e ativação da rota passaram na tentativa 4; o 401 externo sem credenciais também foi confirmado. Os percursos autenticados abaixo, um segundo push e o backup/restauro real ainda não foram comprovados nesta instalação. Não repetir a configuração inicial para os executar.
+
+Depois foi identificado o 404 da secção 5.3. A evidência antiga de prontidão verificava a API e não validava o formulário pelo domínio público. A correção do formulário foi verificada localmente com domínio sintético; confirmar a imagem nova no VPS antes de continuar os percursos seguintes.
+
+1. **Primeira release:** o 401 sem password Caddy já foi observado; com password, abrir a aplicação em HTTPS. Verificar cookie `__Host-omeumes` Secure/HttpOnly, registar uma conta controlada de teste, confirmar o email real Brevo e criar um espaço vazio. Usar apenas nomes/valores sintéticos. Criar banco fictício com saldo 100,00 €, despesa prevista 12,34 € e pagar 12,34 €. Recarregar: uma despesa e saldo 87,66 €. Consultar `/etc/omeumes/deployed` para confirmar SHA e ID escritos pelo deployment; registar resultado de `compose exec -T app node scripts/healthcheck.mjs`, screenshot sem segredos e entrega do email. Não guardar palavras-passe ou tokens no relatório público.
 2. **Segundo push automático:** após autorização específica, fazer uma alteração inócua revista na documentação, commit/push para `master` e acompanhar a corrida. Não fazer deployment manual. Confirmar novo SHA e ID no host. Entrar/recarregar e confirmar a mesma despesa única de 12,34 € e saldo 87,66 €. A pasta de dados e as chaves não mudam.
 3. **CI falhada:** após autorização, executar o exercício controlado abaixo. Ele corre os checks e falha deliberadamente o job Linux; `image` e `deploy` devem ficar skipped. Confirmar o mesmo `/etc/omeumes/deployed`, contentor e movimento. Esta é uma falha induzida da pipeline, registada como tal; não altera código do produto.
 

@@ -18,8 +18,8 @@ write_release() {
   mv -- "$draft" /etc/omeumes/release.env
 }
 route() {
-  install -o root -g caddy -m 0640 "/etc/omeumes/route-$1.caddy" /etc/caddy/omeumes-route.caddy
-  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+  install -o root -g caddy -m 0640 "/etc/omeumes/route-$1.caddy" /etc/caddy/omeumes-route.caddy || return 1
+  caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile || return 1
   systemctl reload caddy
 }
 ready() {
@@ -40,7 +40,13 @@ head -c 1610612737 > "$archive"
 [[ $(stat -c %s "$archive") -le 1610612736 ]]
 printf '%s  %s\n' "$archive_hash" "$archive" | sha256sum --check --status
 gzip -dc "$archive" | docker load
-[[ $(docker image inspect "omeumes:$commit" --format '{{.Id}}') == "$image_id" ]]
+loaded_image_id=$(docker image inspect "omeumes:$commit" --format '{{.Id}}')
+# Classic Docker reports the config digest; containerd reports a manifest/index
+# digest. Both must belong to this tag in the SHA-256-verified archive.
+verified_image_id=$(python3 /usr/local/libexec/omeumes-image-identity.py \
+  "$archive" "omeumes:$commit" "$image_id" "$loaded_image_id")
+echo "Verified image: $verified_image_id (CI reference: $image_id)"
+image_id=$verified_image_id
 new_schema=$(docker run --rm --network none --read-only "$image_id" node scripts/hosted.mjs schema)
 [[ $new_schema =~ ^[0-9]+$ ]]
 rollback() {
@@ -52,12 +58,14 @@ rollback() {
     current_schema=$(compose run --rm --no-deps -T app node --input-type=module -e \
       'import {DatabaseSync} from "node:sqlite";const d=new DatabaseSync(process.env.OMEUMES_DB_PATH,{readOnly:true});console.log(d.prepare("PRAGMA user_version").get().user_version);d.close()' 2>/dev/null) || current_schema=unknown
     write_release "$previous"
-    if [[ $current_schema == "$old_schema" ]] && compose up -d --no-build --force-recreate app && ready; then
-      route app || true
+    if [[ $current_schema == "$old_schema" ]] && compose up -d --no-build --force-recreate app && ready && route app; then
       echo 'Previous image resumed; data was not restored.' >&2
     else
-      route maintenance || true
-      echo 'Kept maintenance. Use the paired snapshot and matching image for explicit recovery.' >&2
+      if route maintenance; then
+        echo 'Kept maintenance. Use the paired snapshot and matching image for explicit recovery.' >&2
+      else
+        echo 'Could not activate maintenance. Check Caddy before retrying; data was not restored.' >&2
+      fi
     fi
   fi
   exit 1

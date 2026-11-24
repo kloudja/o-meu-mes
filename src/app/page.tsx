@@ -1,9 +1,9 @@
 import { headers } from 'next/headers';
 import { notFound } from 'next/navigation';
-import { localAccess } from '@/server/access';
+import { applicationAccess } from '@/server/access';
 import { Application } from './Application';
 export const dynamic='force-dynamic';
 export default async function Page(){
-  if(!localAccess(await headers()))notFound();
+  if(!applicationAccess(await headers()))notFound();
   return <Application/>;
 }

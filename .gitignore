@@ -6,6 +6,7 @@ next-env.d.ts
 out/
 dist/
 coverage/
+__pycache__/
 playwright-report/
 test-results/
 *.tsbuildinfo
