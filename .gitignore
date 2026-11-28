@@ -59,16 +59,14 @@ references/private/
 /docs/IMPORTACAO_NOVEMBRO.md
 /docs/MOBILE_REDE_RESULTADOS.md
 /docs/PERSISTENCIA.md
-/docs/PLANO.md
 /docs/REDE_DOMESTICA.md
-/docs/REQUISITOS.md
-/prompts/
 /Preparar-Rede.cmd
 /scripts/import-november-excel.mjs
 /scripts/read-november-excel.py
 
 # Instruções para agentes e relatórios internos mantidos apenas na cópia local
 AGENTS.md
+!/AGENTS.md
 SKILL.md
 /.codex/
 /.agents/
