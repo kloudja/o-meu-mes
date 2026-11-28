@@ -16,6 +16,8 @@ const reserveKey = (period: string, id: string) => key(period, 'reserve', id);
 export function dependencies(action: Action, period: string, state: State): string[] {
   const catalog = (type: string, id?: string) => (id ? [key(type, id)] : []);
   const origin = (id: string) => catalog(id.startsWith('r:') ? 'reserve' : 'account', id.slice(2));
+  const secondOrigin = (entry?: { shortfall?: { secondSource: string | null } }) =>
+    entry?.shortfall?.secondSource ? origin(entry.shortfall.secondSource) : [];
   const lineCatalog = (line: { accountId: string; categoryId?: string; reserveId?: string }) => [
     ...catalog('account', line.accountId),
     ...catalog('category', line.categoryId),
@@ -33,6 +35,7 @@ export function dependencies(action: Action, period: string, state: State): stri
         lineKey(period, action.lineId),
         manualKey(period, action.lineId),
         ...origin(action.source),
+        ...secondOrigin(action),
         ...(line ? lineCatalog(line) : []),
         ...(action.total || action.remaining || action.complete ? [executionKey(period, action.lineId)] : []),
         ...(action.includedInTotal ? [eventKey(period, action.includedInTotal)] : []),
@@ -60,6 +63,7 @@ export function dependencies(action: Action, period: string, state: State): stri
       return [
         ...lineCatalog(action.line),
         ...(action.execution ? origin(action.execution.source) : []),
+        ...secondOrigin(action.execution),
         ...(action.target === 'base'
           ? [key('base', action.line.id)]
           : [lineKey(period, action.line.id), executionKey(period, action.line.id)]),

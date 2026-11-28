@@ -12,11 +12,17 @@ export function Select({
   placeholder,
   value,
   disabled,
+  className,
   ...props
 }: OptionList & Omit<ComponentPropsWithoutRef<'select'>, 'children'> & { placeholder?: string }) {
   const empty = options.length === 0;
   return (
-    <select {...props} value={empty ? '' : value} disabled={disabled || empty}>
+    <select
+      {...props}
+      className={className ? `select ${className}` : 'select'}
+      value={empty ? '' : value}
+      disabled={disabled || empty}
+    >
       {empty ? (
         <option value="">{emptyLabel}</option>
       ) : (
@@ -43,6 +49,8 @@ export function Choice({
   required = false,
   invalid = false,
   error,
+  initialFocus,
+  clearLabel,
 }: OptionList & {
   label: string;
   name: string;
@@ -51,36 +59,43 @@ export function Choice({
   required?: boolean;
   invalid?: boolean;
   error?: React.ReactNode;
+  initialFocus?: boolean;
+  clearLabel?: string;
 }) {
   const id = useId(),
     listId = `${id}-options`;
   const input = useRef<HTMLInputElement>(null),
     list = useRef<HTMLUListElement>(null);
   const [open, setOpen] = useState(false),
-    [filter, setFilter] = useState(''),
-    [draft, setDraft] = useState(''),
+    [filter, setFilter] = useState<string | null>(null),
     [highlight, setHighlight] = useState(-1);
   const empty = options.length === 0;
-  const selected = options.find((option) => option.id === value);
   useLayoutEffect(() => {
     if (open) list.current?.scrollIntoView({ block: 'nearest' });
   }, [open]);
-  const visible = options.filter((option) => matchesText(option.name, filter));
+  const choices = clearLabel && !empty ? [{ id: '', name: clearLabel }, ...options] : options;
+  const selected = options.find((option) => option.id === value);
+  const visible = choices.filter((option) => matchesText(option.name, filter ?? ''));
+  const close = () => {
+    setOpen(false);
+    setFilter(null);
+    setHighlight(-1);
+  };
   const showAll = () => {
     setOpen(true);
-    setFilter('');
+    setFilter(null);
     setHighlight(-1);
+    input.current?.select();
   };
   const choose = (id: string) => {
     onChange(id);
-    setDraft('');
-    setOpen(false);
+    close();
   };
   return (
     <div
       className="choice"
       onBlur={(e) => {
-        if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+        if (!e.currentTarget.contains(e.relatedTarget)) close();
       }}
     >
       <label htmlFor={id}>{label}</label>
@@ -89,6 +104,7 @@ export function Choice({
           ref={input}
           id={id}
           name={name}
+          data-initial-focus={initialFocus || undefined}
           role="combobox"
           disabled={empty}
           aria-expanded={!empty && open}
@@ -96,8 +112,8 @@ export function Choice({
           aria-activedescendant={open && visible[highlight] ? `${listId}-${highlight}` : undefined}
           aria-autocomplete="list"
           autoComplete="off"
-          placeholder="Pesquisar ou escolher…"
-          value={empty ? emptyLabel : (selected?.name ?? draft)}
+          placeholder={clearLabel ?? 'Pesquisar ou escolher…'}
+          value={empty ? emptyLabel : (filter ?? selected?.name ?? '')}
           required={required}
           aria-invalid={invalid}
           aria-describedby={invalid ? 'form-error' : undefined}
@@ -105,8 +121,6 @@ export function Choice({
             if (!open) showAll();
           }}
           onChange={(e) => {
-            onChange('');
-            setDraft(e.target.value);
             setFilter(e.target.value);
             setHighlight(-1);
             setOpen(true);
@@ -114,25 +128,37 @@ export function Choice({
           onKeyDown={(e) => {
             if (e.key === 'Escape' && open) {
               e.preventDefault();
-              setOpen(false);
+              close();
               return;
             }
-            if (e.key === 'Enter' && open && visible[highlight]) {
+            if (e.key === 'Enter' && open) {
               e.preventDefault();
-              choose(visible[highlight].id);
+              const option = visible[highlight] ?? (visible.length === 1 ? visible[0] : undefined);
+              if (option) choose(option.id);
+              return;
+            }
+            if (e.key === 'Enter' && !open) {
+              e.preventDefault();
+              showAll();
               return;
             }
             if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return;
             e.preventDefault();
             if (!open) {
               showAll();
-              setHighlight(e.key === 'ArrowDown' ? 0 : options.length - 1);
+              const selectedIndex = choices.findIndex((option) => option.id === value);
+              setHighlight(
+                selectedIndex >= 0 ? selectedIndex : e.key === 'ArrowDown' ? 0 : choices.length - 1,
+              );
               return;
             }
+            if (!visible.length) return;
             const next =
               e.key === 'ArrowDown'
                 ? Math.min(highlight + 1, visible.length - 1)
-                : Math.max(highlight - 1, 0);
+                : highlight < 0
+                  ? visible.length - 1
+                  : Math.max(highlight - 1, 0);
             setHighlight(next);
             list.current?.children[next]?.scrollIntoView({ block: 'nearest' });
           }}
@@ -146,12 +172,10 @@ export function Choice({
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => {
             input.current?.focus();
-            if (open) setOpen(false);
+            if (open) close();
             else showAll();
           }}
-        >
-          <Icon name="chevron" size={17} />
-        </button>
+        ></button>
         {!empty && open && (
           <ul ref={list} id={listId} className="choice-options" role="listbox" aria-label={label}>
             {visible.map((option, index) => (

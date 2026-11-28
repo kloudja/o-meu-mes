@@ -26,9 +26,9 @@ test('compra por outro banco mostra o acerto no mês até registar a transferên
   await goToScreen(page,'Plano e movimentos');
   await page.getByRole('button',{name:'Adicionar despesa ao plano'}).click();
   const dialog=page.getByRole('dialog');
-  const reserve=dialog.getByLabel('Poupança usada para pagar (opcional)');
+  const reserve=dialog.getByLabel('Poupança usada para pagar (opcional)', { exact: true });
   await expect(reserve).toBeDisabled();
-  await expect(reserve.locator('option:checked')).toHaveText('Sem poupanças nesta conta');
+  await expect(reserve).toHaveValue('Sem poupanças nesta conta');
   await dialog.getByRole('button',{name:'Cancelar'}).click();
 
   const food=page.getByTestId('line-food');

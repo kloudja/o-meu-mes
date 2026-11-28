@@ -13,7 +13,7 @@ test('receitas mensais entram no plano e cada mês começa com o saldo calculado
   }
 
   await goToScreen(page, 'Plano e movimentos');
-  await page.getByTestId('line-rent').getByRole('button', { name: 'Pagar', exact: true }).click();
+  await page.getByTestId('line-rent').getByRole('button', { name: 'Pagar com ActivoBank A', exact: true }).click();
   await expect(page.getByTestId('line-rent')).toContainText('Concluída');
   await goToScreen(page, 'Modelo Base');
   await expect(page.getByRole('heading', { name: 'Receitas mensais', exact: true })).toBeVisible();

@@ -24,7 +24,7 @@ export const monthKindLabel: Record<Kind, string> = {
 export const monthKindTotal: Record<Kind, string> = {
   expense: 'Total de despesas',
   income: 'Total de receitas previstas',
-  saving: 'Total de poupanças',
+  saving: 'Reforços previstos',
   investment: 'Total de investimentos',
 };
 export const baseKinds: Kind[] = ['income', 'expense', 'saving'];

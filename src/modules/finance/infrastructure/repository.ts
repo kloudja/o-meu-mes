@@ -22,7 +22,7 @@ export function readMonth(db: DatabaseSync, ctx: SpaceContext, period?: string):
     .all(ctx.spaceId)
     .map((r) => String(r.period));
   if (period && !periods.includes(period)) throw new DomainError('MONTH', 'Mês indisponível.');
-  const state = load(db, ctx, period ?? periods.at(-1) ?? '');
+  const state = load(db, ctx, period ?? periods.at(-1) ?? '', true);
   if (state.previousBalances)
     state.previousBalances.balances = Object.fromEntries(
       Object.entries(state.previousBalances.balances).filter(([source]) => source.startsWith('r:')),

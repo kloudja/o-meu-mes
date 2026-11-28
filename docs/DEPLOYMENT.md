@@ -1,14 +1,14 @@
 # Alojamento de O meu mês
 
-**Estado em 24/11/2026:** primeiro deployment restrito concluído na [corrida 44942187836, tentativa 4](https://github.com/kloudja/o-meu-mes/actions/runs/44942187836), commit `42741b568413c5a0859fd1fa4a9655b24b4ffd44`. O log confirmou a imagem conferida, snapshot, preparação, prontidão e ativação válida da rota Caddy. A consulta externa HTTPS sem credenciais respondeu **401**, como previsto pela proteção adicional. Login, entrega real de email, registo financeiro pelo navegador e restauro no VPS ainda precisam da validação descrita abaixo.
+**Estado em 24/11/2026:** versão `3fce0bf` instalada pela [corrida 45509910966](https://github.com/kloudja/o-meu-mes/actions/runs/45509910966), com os quatro jobs bem-sucedidos. A proteção HTTP adicional foi depois removida no host a pedido do utilizador. A consulta externa sem credenciais HTTP devolveu **200**, e o navegador mostrou o formulário Entrar. As APIs de espaços e movimentos devolveram 403 sem sessão, sem desafio HTTP Basic. Login pessoal, entrega real de email, registo financeiro pelo navegador e restauro no VPS ainda precisam da validação descrita abaixo.
 
-O acesso alojado continua restrito, inicialmente com dados sintéticos. As outras fases do produto mantêm-se fora desta tarefa. Commit, push, alterações no VPS e exercícios reais exigem instrução explícita. Os textos e condições de abertura pública identificados na MU6 continuam pendentes.
+**Decisão posterior do utilizador, aplicada:** remover a palavra-passe HTTP adicional do Caddy. A rota passa diretamente para o formulário da aplicação; sessões e permissões continuam a ser verificadas pela aplicação. A secção 5.4 documenta a operação já feita neste VPS e serve para atualizar outras instalações antigas, sem necessidade de repetir aqui. A validação inicial usa dados sintéticos. As outras fases do produto mantêm-se fora desta tarefa. Commit, push, alterações no VPS e exercícios reais exigem instrução explícita. Os textos e condições de abertura pública identificados na MU6 continuam pendentes.
 
-**Verificação posterior do acesso:** a janela anónima do Brave apresentou as credenciais Caddy, mas depois mostrou 404. A página inicial ainda usava a regra antiga de acesso apenas por loopback. Esta revisão permite o Host da origem configurada e passa a verificar o HTML real da aplicação na prontidão e no teste da imagem. É necessária uma nova imagem desta revisão; a corrida antiga e um HTTP 200 isolado não comprovam a página funcional. Ver secção 5.3.
+**Histórico do 404:** a imagem anterior ainda usava a regra antiga de acesso apenas por loopback. A versão `3fce0bf` permite o Host da origem configurada e verifica o HTML real da aplicação na prontidão e no teste da imagem. O formulário foi depois observado no endereço público. Ver secção 5.3 para a causa; não voltar a executar os reparos históricos numa instalação já corrigida.
 
 ## O que fazer agora
 
-1. Abrir [omeumes.pt](https://omeumes.pt). O primeiro pedido de credenciais é a proteção temporária do Caddy: utilizador `verificacao` do exemplo e a palavra-passe guardada durante a instalação. Depois aparece o acesso da própria aplicação, que tem credenciais independentes.
+1. Abrir [omeumes.pt](https://omeumes.pt) diretamente no formulário da aplicação e usar a conta pessoal. Não existe uma conta adicional `verificacao` no fluxo pretendido. Se ainda aparecer um pedido HTTP Basic ou HTTP 401 antes do formulário, a rota antiga ainda precisa da atualização da secção 5.4.
 2. Registar/entrar com uma conta controlada, confirmar a entrega do email e criar um espaço de teste vazio. Ensaiar saldo inicial 100,00 €, despesa 12,34 €, pagamento e recarga: uma despesa e saldo 87,66 €. Ver secção 6 para o percurso e evidência. Não importar a base Windows nem histórico para este teste.
 3. Antes de dados financeiros reais, completar o backup cifrado fora do servidor e o restauro verificado das secções 6–8. O snapshot automático pré-deploy fica no próprio VPS e não substitui uma cópia recuperável fora dele.
 4. Nas próximas alterações normais de código, o fluxo é revisão/testes locais → commit/push autorizado para `master` → acompanhar Actions → abrir a aplicação e confirmar os dados. **Não repetir `init`, bootstrap ou SCP da imagem.** A pipeline transfere a imagem e conserva os dados automaticamente. Alterações aos helpers root-owned, Compose ou Caddy são manutenção do host e continuam a exigir uma atualização explícita desses ficheiros.
@@ -114,19 +114,17 @@ No editor privado, substituir apenas os placeholders Brevo por uma API key trans
 sudo cp -an /etc/caddy/Caddyfile /etc/caddy/Caddyfile.before-omeumes
 sudo install -o root -g caddy -m 0640 ~/omeumes-deploy-review/route-maintenance.caddy /etc/omeumes/route-maintenance.caddy
 if sudo test -e /etc/omeumes/route-app.caddy; then
-  echo 'route-app.caddy já existe; conservar o hash da palavra-passe configurada.'
+  echo 'route-app.caddy já existe; conservar alterações próprias e atualizar a rota antiga pela secção 5.4.'
 else
   sudo install -o root -g caddy -m 0640 ~/omeumes-deploy-review/route-app.caddy.example /etc/omeumes/route-app.caddy
 fi
 sudo install -o root -g caddy -m 0640 /etc/omeumes/route-maintenance.caddy /etc/caddy/omeumes-route.caddy
-caddy hash-password
-sudo nano /etc/omeumes/route-app.caddy
 sudo nano /etc/caddy/Caddyfile
 ```
 
-`caddy hash-password` pede a palavra-passe no terminal. Guardar a palavra-passe no gestor e colocar o hash no ficheiro `route-app.caddy`, em vez de `REPLACE_WITH_CADDY_HASH`. No `Caddyfile`, conservar outras configurações existentes e substituir só o conteúdo do bloco `omeumes.pt` por `import /etc/caddy/omeumes-route.caddy`; ver o exemplo `deploy/Caddyfile`. Não importar já a rota da aplicação.
+No `Caddyfile`, conservar outras configurações existentes e substituir só o conteúdo do bloco `omeumes.pt` por `import /etc/caddy/omeumes-route.caddy`; ver o exemplo `deploy/Caddyfile`. Não importar já a rota da aplicação. A rota da aplicação contém apenas o proxy para 127.0.0.1:3000 e os cabeçalhos; não gerar nem configurar uma palavra-passe Caddy adicional.
 
-O exemplo usa `basicauth`, reconhecido pelo Caddy anterior a 2.8 e também pelas versões mais recentes verificadas. A documentação atual chama-lhe `basic_auth`; esse nome novo é rejeitado por versões antigas. Confirmar a versão com `caddy version`. Não substituir o ficheiro real por um exemplo sem o hash configurado. Ver a secção 5.2 se o deployment falhar com `unrecognized directive: basic_auth`.
+O exemplo atual não usa `basicauth` nem `basic_auth`. Confirmar a versão com `caddy version` e validar a configuração antes de a recarregar. As instalações antigas que ainda usam a proteção adicional devem seguir a secção 5.4.
 
 ```bash
 sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
@@ -281,7 +279,7 @@ curl -I https://omeumes.pt
 
 `init` cria esquema completo vazio e autoridade independente, sem contas, categorias, meses, movimentos ou utilizadores. Não é uma migração da base Windows. Repetir `init` recusa substituir os ficheiros. Não usar `OMEUMES_TEST_TRANSITION` nem fixtures em produção. Se houver falha parcial, preservar os ficheiros e investigar; não apagar/reinicializar uma base para ultrapassar o erro.
 
-Depois de instalar os secrets, autorizar a repetição do job `deploy` dessa corrida (interface Actions → Re-run failed jobs, ou `gh run rerun $runId --failed --repo kloudja/o-meu-mes`). O helper mantém 503, para a instância, guarda o par base/autoridade e configuração, executa `prepare`, inicia a imagem e testa prontidão. Só depois instala a rota com password adicional. A prontidão exige SQLite íntegra/esquema exato, escrita disponível, autoridade e chave corretas, base fora de quarentena, Next a responder e worker com ciclo concluído. Não prova entrega Brevo nem substitui o ensaio no navegador.
+Depois de instalar os secrets, autorizar a repetição do job `deploy` dessa corrida (interface Actions → Re-run failed jobs, ou `gh run rerun $runId --failed --repo kloudja/o-meu-mes`). O helper mantém 503, para a instância, guarda o par base/autoridade e configuração, executa `prepare`, inicia a imagem e testa prontidão. Só depois ativa a rota da aplicação. A prontidão exige SQLite íntegra/esquema exato, escrita disponível, autoridade e chave corretas, base fora de quarentena, Next a responder e worker com ciclo concluído. Não prova entrega Brevo nem substitui o ensaio no navegador.
 
 ### 5.1. Falha após «Loaded image»: IDs de Docker clássico e containerd
 
@@ -331,61 +329,15 @@ Para desfazer só a atualização do host, reinstalar a cópia `omeumes-deploy.b
 
 Referências: [armazenamento containerd do Docker](https://docs.docker.com/engine/storage/containerd/) e [implementação de inspeção no Moby](https://github.com/moby/moby/blob/master/daemon/containerd/image_inspect.go).
 
-### 5.2. «unrecognized directive: basic_auth» e recuperação da manutenção
+### 5.2. Histórico da incompatibilidade da proteção HTTP adicional
 
-O nome `basic_auth` surgiu no Caddy 2.8; versões anteriores usam `basicauth`. A rota do exemplo foi ajustada para a grafia compatível. Um 503 inicial de prontidão pode ser transitório enquanto o supervisor arranca; se o log chega à ativação da rota Caddy, essa espera já terminou com sucesso. A falha aqui é de adaptação do Caddyfile.
+A configuração inicial usava `basic_auth`, nome que o Caddy anterior a 2.8 não reconhecia. A correção anterior usou a grafia antiga e corrigiu o rollback para só anunciar sucesso depois de validar e ativar a rota. Esta proteção adicional foi entretanto retirada do fluxo a pedido do utilizador; não voltar a configurar credenciais Caddy. Para atualizar uma instalação que ainda a utiliza, seguir a secção 5.4.
 
-**Ubuntu, na sessão pessoal do VPS**, corrigir apenas a palavra da diretiva, conservando o nome e hash reais. O bloco corre numa subshell e não fecha a sessão SSH em caso de erro. Guarda as configurações anteriores e repõe manutenção validada antes de recarregar/iniciar o Caddy:
-
-```bash
-(
-  set -euo pipefail
-  caddy version
-  sudo cp -an /etc/omeumes/route-app.caddy /etc/omeumes/route-app.caddy.before-auth-name
-  sudo cp -an /etc/caddy/omeumes-route.caddy /etc/caddy/omeumes-route.caddy.before-auth-name
-  sudo sed -i -E 's/^([[:space:]]*)basic_auth([[:space:]]*\{)/\1basicauth\2/' /etc/omeumes/route-app.caddy
-  sudo install -o root -g caddy -m 0640 /etc/omeumes/route-maintenance.caddy /etc/caddy/omeumes-route.caddy
-  sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
-  if sudo systemctl is-active --quiet caddy; then
-    sudo systemctl reload caddy
-  else
-    sudo systemctl start caddy
-  fi
-  curl -I https://omeumes.pt
-)
-```
-
-O endereço deve voltar a responder 503 de manutenção nesta etapa. Não voltar a executar `init`. Para reverter só o nome da diretiva, repor a cópia `route-app.caddy.before-auth-name`; isso volta a exigir uma versão que aceite `basic_auth`. Não repor automaticamente o ficheiro ativo anterior, porque pode conter a configuração que não valida.
-
-O script de deployment foi também corrigido: `route` interrompe antes de reload se a instalação ou validação falhar, mesmo quando Bash desativa implicitamente `errexit` num contexto condicional. O rollback só anuncia `Previous image resumed` depois de prontidão **e** ativação válida da rota. Se esta falhar, tenta manutenção; se a própria manutenção falhar, informa essa falha. A versão antiga podia imprimir sucesso apesar do erro de Caddy observado no log.
-
-Para instalar só essa correção do script no host, depois de o Caddy estar novamente em manutenção:
-
-**Windows PowerShell, na raiz do projeto:**
-
-```powershell
-scp .\deploy\omeumes-deploy.sh omeumes-admin@82.108.206.102:~/omeumes-deploy-caddy-fix.sh
-if ($LASTEXITCODE -ne 0) { throw 'Transferência falhou; não continuar no VPS.' }
-```
-
-**Ubuntu:**
-
-```bash
-(
-  set -euo pipefail
-  bash -n ~/omeumes-deploy-caddy-fix.sh
-  sudo cp -an /usr/local/sbin/omeumes-deploy /usr/local/sbin/omeumes-deploy.before-caddy-fix
-  sudo install -o root -g root -m 0755 ~/omeumes-deploy-caddy-fix.sh /usr/local/sbin/omeumes-deploy
-)
-```
-
-O script local conserva a correção de identidade da secção 5.1; o helper Python dessa secção tem de estar instalado. Depois da correção da diretiva e instalação autorizada do script, repetir só o job falhado da corrida existente. Não requer reconstrução da imagem nem alteração de dados. Para desfazer apenas o script, reinstalar `omeumes-deploy.before-caddy-fix` com proprietário root e modo 0755.
-
-[Diretiva na documentação oficial do Caddy](https://caddyserver.com/docs/caddyfile/directives/basic_auth).
+O rollback continua a exigir prontidão, validação e reload para anunciar retoma. Se a rota da aplicação falhar, tenta manutenção; se a própria manutenção falhar, informa essa falha. A manutenção temporária durante deployment e backup mantém-se.
 
 ### 5.3. Credenciais aceites mas página 404
 
-Na instalação observada, o Brave no perfil normal não apresentou o pedido de credenciais; a janela anónima apresentou-o. Isto permite continuar o diagnóstico do acesso nesse contexto, mas não identifica por si só a causa no perfil normal.
+Antes de remover a proteção HTTP adicional, o Brave no perfil normal não apresentou o pedido de credenciais; a janela anónima apresentou-o. A remoção dessa proteção elimina a dependência desse diálogo. A aplicação apresenta agora o seu próprio formulário.
 
 O 404 depois das credenciais era uma falha da aplicação: `src/app/page.tsx` usava `localAccess`, que só aceita localhost/127.0.0.1. A página passa a usar `applicationAccess` com o Host exato de `OMEUMES_AUTH_ORIGIN`, incluindo a porta. Sem origem configurada mantém a regra local; origens inválidas e domínios diferentes continuam recusados. Os cabeçalhos forwarded não concedem acesso. A regra de escrita local não foi alterada, e as APIs mantêm os seus controlos de origem e sessão.
 
@@ -393,13 +345,56 @@ O [Next.js pode devolver HTTP 200 quando mostra uma página not-found depois de 
 
 Esta correção é código da aplicação e da imagem. Depois de revisão e commit/push autorizados, deixar a CI construir, verificar e fazer deployment da nova imagem. Não executar `init`, não voltar a copiar a imagem à mão e não reinstalar os helpers do host por causa desta correção. Depois do deployment, confirmar no navegador autenticado que aparece o formulário **Entrar**, sem aceitar apenas o estado verde da corrida antiga.
 
+### 5.4. Remover a conta HTTP adicional de uma instalação existente
+
+Esta operação foi expressamente pedida pelo utilizador. O formulário de login/registo fica acessível diretamente; a autenticação e autorização dos dados continuam na aplicação. O exemplo do repositório já não inclui a conta `verificacao`.
+
+Uma imagem nova não altera os ficheiros Caddy root-owned. É necessário atualizar tanto `/etc/omeumes/route-app.caddy`, que os deployments voltam a instalar, como `/etc/caddy/omeumes-route.caddy`, a rota ativa. O bloco seguinte corre na sessão SSH pessoal do VPS, serializa com deployments/backups, guarda ambas as versões anteriores e restaura-as se houver falha. Não altera a base, as chaves da aplicação ou as contas.
+
+```bash
+sudo bash <<'BASH'
+set -Eeuo pipefail
+exec 9>/run/lock/omeumes-deployment.lock
+flock -n 9 || { echo 'Another deployment/backup is running.' >&2; exit 1; }
+backup=$(mktemp -d /etc/omeumes/before-remove-access-gate-XXXXXX)
+cp -a /etc/omeumes/route-app.caddy "$backup/app.caddy"
+cp -a /etc/caddy/omeumes-route.caddy "$backup/active.caddy"
+restore() {
+  trap - ERR
+  install -o root -g caddy -m 0640 "$backup/app.caddy" /etc/omeumes/route-app.caddy
+  install -o root -g caddy -m 0640 "$backup/active.caddy" /etc/caddy/omeumes-route.caddy
+  if caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile; then systemctl reload caddy || true; fi
+  echo "Failed; previous routes restored from $backup" >&2
+  exit 1
+}
+trap restore ERR
+cat > "$backup/new.caddy" <<'CADDY'
+# Application sign-in and permissions are enforced by the application.
+header Cache-Control "private, no-store"
+reverse_proxy 127.0.0.1:3000 {
+    # Sessions use cookies; do not forward stale browser Basic credentials.
+    header_up -Authorization
+}
+CADDY
+install -o root -g caddy -m 0640 "$backup/new.caddy" /etc/omeumes/route-app.caddy
+install -o root -g caddy -m 0640 "$backup/new.caddy" /etc/caddy/omeumes-route.caddy
+caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+systemctl reload caddy
+echo "Extra access gate removed. Backups: $backup"
+BASH
+```
+
+Depois da mensagem de sucesso, abrir `https://omeumes.pt/` sem credenciais HTTP: deve mostrar o formulário Entrar, com HTTP 200. Sem sessão pessoal, `/api/spaces` e as APIs financeiras continuam a devolver 401/403. Se a operação falhar, conservar a pasta de backup impressa e investigar o erro antes de repetir.
+
+Para uma reversão explícita, usar os dois ficheiros `app.caddy` e `active.caddy` da pasta de backup guardada, repondo cada um no caminho correspondente com root:caddy e 0640, validar o Caddyfile e só então recarregar o serviço. Isso volta a ativar a proteção anterior se ela existia nessa cópia. Não voltar a executar o bootstrap ou `init`.
+
 ## 6. Validação depois do primeiro deployment
 
-Em 24/11/2026, deployment, prontidão e ativação da rota passaram na tentativa 4; o 401 externo sem credenciais também foi confirmado. Os percursos autenticados abaixo, um segundo push e o backup/restauro real ainda não foram comprovados nesta instalação. Não repetir a configuração inicial para os executar.
+Em 24/11/2026, o novo push `3fce0bf` passou Windows, Linux, imagem e deployment. A remoção posterior da proteção HTTP adicional foi verificada com formulário público e APIs protegidas. Os percursos autenticados abaixo e o backup/restauro real ainda não foram comprovados nesta instalação. Não repetir a configuração inicial para os executar.
 
-Depois foi identificado o 404 da secção 5.3. A evidência antiga de prontidão verificava a API e não validava o formulário pelo domínio público. A correção do formulário foi verificada localmente com domínio sintético; confirmar a imagem nova no VPS antes de continuar os percursos seguintes.
+A evidência antiga de prontidão verificava a API e não validava o formulário pelo domínio público. A nova imagem e a inspeção do formulário no VPS cobrem essa lacuna. A conservação de um movimento feito no navegador entre dois deployments ainda exige o percurso específico abaixo.
 
-1. **Primeira release:** o 401 sem password Caddy já foi observado; com password, abrir a aplicação em HTTPS. Verificar cookie `__Host-omeumes` Secure/HttpOnly, registar uma conta controlada de teste, confirmar o email real Brevo e criar um espaço vazio. Usar apenas nomes/valores sintéticos. Criar banco fictício com saldo 100,00 €, despesa prevista 12,34 € e pagar 12,34 €. Recarregar: uma despesa e saldo 87,66 €. Consultar `/etc/omeumes/deployed` para confirmar SHA e ID escritos pelo deployment; registar resultado de `compose exec -T app node scripts/healthcheck.mjs`, screenshot sem segredos e entrega do email. Não guardar palavras-passe ou tokens no relatório público.
+1. **Acesso da aplicação:** obter HTTP 200 e o formulário Entrar sem credenciais Caddy. Sem sessão da aplicação, as APIs financeiras devem recusar o acesso. Verificar cookie `__Host-omeumes` Secure/HttpOnly, registar uma conta controlada de teste, confirmar o email real Brevo e criar um espaço vazio. Usar apenas nomes/valores sintéticos. Criar banco fictício com saldo 100,00 €, despesa prevista 12,34 € e pagar 12,34 €. Recarregar: uma despesa e saldo 87,66 €. Consultar `/etc/omeumes/deployed` para confirmar SHA e ID escritos pelo deployment; registar resultado de `compose exec -T app node scripts/healthcheck.mjs`, screenshot sem segredos e entrega do email. Não guardar palavras-passe ou tokens no relatório público.
 2. **Segundo push automático:** após autorização específica, fazer uma alteração inócua revista na documentação, commit/push para `master` e acompanhar a corrida. Não fazer deployment manual. Confirmar novo SHA e ID no host. Entrar/recarregar e confirmar a mesma despesa única de 12,34 € e saldo 87,66 €. A pasta de dados e as chaves não mudam.
 3. **CI falhada:** após autorização, executar o exercício controlado abaixo. Ele corre os checks e falha deliberadamente o job Linux; `image` e `deploy` devem ficar skipped. Confirmar o mesmo `/etc/omeumes/deployed`, contentor e movimento. Esta é uma falha induzida da pipeline, registada como tal; não altera código do produto.
 
@@ -496,7 +491,7 @@ systemctl reload caddy
 exit
 ```
 
-Reautenticar e conferir a despesa, saldo, contagens e ausência de acesso sem password Caddy. Preservar o estado anterior, arquivo cifrado e evidência até concluir a revisão. As cópias desencriptadas contêm segredos e devem ser eliminadas segundo o procedimento de custódia aprovado, após a validação.
+Reautenticar na aplicação e conferir a despesa, saldo, contagens e recusa das APIs financeiras sem sessão. O formulário de acesso deve estar disponível sem palavra-passe Caddy adicional. Preservar o estado anterior, arquivo cifrado e evidência até concluir a revisão. As cópias desencriptadas contêm segredos e devem ser eliminadas segundo o procedimento de custódia aprovado, após a validação.
 
 ## 8. Migração, rollback e recuperação com dados reais
 
@@ -518,4 +513,4 @@ Um snapshot integral antigo contém uma autoridade antiga genuína: um HMAC vál
 
 ## Referências técnicas
 
-[Next.js self-hosting](https://nextjs.org/docs/app/guides/self-hosting), [Node 24 SQLite/backup](https://nodejs.org/docs/latest-v24.x/api/sqlite.html), [GitHub: ambientes e concorrência](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments), [Docker: transportar a mesma imagem entre jobs](https://docs.docker.com/build/ci/github-actions/share-image-jobs/), [Caddy basic_auth](https://caddyserver.com/docs/caddyfile/directives/basic_auth) e [age](https://github.com/FiloSottile/age).
+[Next.js self-hosting](https://nextjs.org/docs/app/guides/self-hosting), [Node 24 SQLite/backup](https://nodejs.org/docs/latest-v24.x/api/sqlite.html), [GitHub: ambientes e concorrência](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/control-deployments), [Docker: transportar a mesma imagem entre jobs](https://docs.docker.com/build/ci/github-actions/share-image-jobs/), [Caddy reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) e [age](https://github.com/FiloSottile/age).

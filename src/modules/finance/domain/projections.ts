@@ -12,6 +12,7 @@ function ledgerEvents(m:Month){
   return m.events.filter(e=>!e.voided||reversed.has(e.id));
 }
 export const realized=(m:Month,id:string)=>sum(ledgerEvents(m).filter(e=>e.lineId===id).map(e=>e.amount));
+export const unassignedExpenseTotal=(m:Month)=>sum(activeEvents(m).map(e=>e.reserveShortfall?.unassigned??0));
 export function completed(m:Month,id:string){
   const line=m.lines.find(l=>l.id===id);
   const events=activeEvents(m).filter(e=>e.lineId===id&&

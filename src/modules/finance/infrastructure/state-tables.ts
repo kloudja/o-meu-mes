@@ -97,6 +97,7 @@ export function persist(db: DatabaseSync, ctx: SpaceContext, s: State) {
     for (const e of m.events) {
       const {
         authorship: _authorship,
+        createdAt: _createdAt,
         amount,
         purchaseAmount,
         corrects,
@@ -174,7 +175,12 @@ export function retire(
   ).run(ctx.spaceId, id);
 }
 
-export function load(db: DatabaseSync, ctx: SpaceContext, period: string): State {
+export function load(
+  db: DatabaseSync,
+  ctx: SpaceContext,
+  period: string,
+  includeCreationDates = false,
+): State {
   const all = (t: string, monthly = false) =>
     db
       .prepare(
@@ -209,6 +215,8 @@ export function load(db: DatabaseSync, ctx: SpaceContext, period: string): State
       deltas: {},
       authorship: r.author_id === null ? 'unknown' : undefined,
     };
+    if (includeCreationDates && !e.historical && r.author_id !== null && typeof r.AddedAt === 'string')
+      e.createdAt = r.AddedAt;
     if (r.purchase_amount !== null) e.purchaseAmount = r.purchase_amount as number;
     if (r.corrects !== null) e.corrects = r.corrects as string;
     if (r.replaced_by !== null) e.replacedBy = r.replaced_by as string;

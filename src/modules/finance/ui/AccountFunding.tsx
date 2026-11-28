@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { canonical, type Action } from '../domain/actions';
 import { accountFunding, transferRoutes } from '@/modules/finance/domain/funding';
 import { money } from '@/modules/finance/domain/money';
-import { daysInMonth, DomainError, sum, validDate } from '@/modules/finance/domain/validation';
+import { DomainError, sum, validDate } from '@/modules/finance/domain/validation';
 import type { Account, Month } from '@/modules/finance/domain/model';
 import type {FinanceMemory} from '../client/draft';
 import type { Confirmed } from '../contracts/command';
@@ -11,6 +11,7 @@ import { Dialog } from '../../../shared/ui/Dialog';
 import { Icon } from '../../../shared/ui/Icon';
 import { PaymentReasons } from './PaymentReasons';
 import { OutdatedNotice } from './MovementNotices';
+import { DateField } from './DateField';
 
 type Batch = Extract<Action,{type:'recordSuggestedTransfers'}>;
 interface Props {
@@ -46,7 +47,7 @@ function FundingReview({memory,space,month,report,onOpenChange,busy,uncertain,di
   useEffect(()=>{memory.funding=busy||uncertain?undefined:{space,period:month.period,review,date};},[busy,uncertain,space,month.period,review,date,memory]);
   const [error,setError]=useState<{code:string;message:string}|null>(null);
   const [refreshing,setRefreshing]=useState(false);
-  const dateInput=useRef<HTMLInputElement>(null);
+  const dateButton=useRef<HTMLButtonElement>(null);
   const reviewButton=useRef<HTMLButtonElement>(null);
   const reviewAlert=useRef<HTMLDivElement>(null);
   const submitting=useRef(false);
@@ -74,7 +75,7 @@ function FundingReview({memory,space,month,report,onOpenChange,busy,uncertain,di
       try{await refresh?.();}finally{setRefreshing(false);}
       requestAnimationFrame(()=>reviewButton.current?.focus());
     }
-    if(code==='DATE')requestAnimationFrame(()=>dateInput.current?.focus());
+    if(code==='DATE')requestAnimationFrame(()=>dateButton.current?.focus());
   }
   async function record(){
     if(blocked||stale||submitting.current)return;
@@ -141,7 +142,10 @@ function FundingReview({memory,space,month,report,onOpenChange,busy,uncertain,di
       {suggestions.length>0&&<form className="funding-confirm" noValidate onSubmit={e=>{e.preventDefault();void record();}}>
         <p><strong>{routes.length} {routes.length===1?'transferência':'transferências'} · {money(suggested)}</strong></p>
         <p>Registe o lote depois de efetuar todas as transferências no banco. Se fez só algumas, ou se os valores ou as datas foram diferentes, prepare cada transferência individualmente.</p>
-        <label>Data efetiva<input ref={dateInput} type="date" value={date} min={`${review.period}-01`} max={`${review.period}-${daysInMonth(Number(review.period.slice(0,4)),Number(review.period.slice(5)))}`} disabled={blocked} onChange={e=>{setDate(e.target.value);if(dateError)setError(null);}} aria-invalid={dateError} aria-describedby={dateError?'batch-date-error':undefined} required/>{dateError&&<span id="batch-date-error" className="inline-error" role="alert">{error.message}</span>}</label>
+        <DateField label="Data efetiva" buttonRef={dateButton} value={date} period={review.period} disabled={blocked}
+          onChange={day=>{setDate(day);if(dateError)setError(null);}} invalid={dateError}
+          describedBy={dateError?'batch-date-error':undefined}
+          error={dateError&&<span id="batch-date-error" className="inline-error" role="alert">{error.message}</span>}/>
         <button className="button primary" disabled={blocked||stale}><Icon name="check" size={17}/>{routes.length===1?'Registar 1 transferência já efetuada':`Registar ${routes.length} transferências já efetuadas`}</button>
       </form>}
       {busy&&<p role="status">A confirmar gravação local…</p>}

@@ -1,3 +1,4 @@
+import { calendarDay, calendarPopup, chooseDate } from './calendar';
 import { expect, test, type FinanceApi } from './application';
 import type { Locator, Page } from '@playwright/test';
 import { goToScreen } from './navigation';
@@ -96,11 +97,15 @@ test('duas sessões recusam 50 €, reveem 35 € e repetem o pedido gravado sem
     await dialog(page).getByRole('button',{name:'Rever nova lista'}).click();
     await expect(route).toContainText('35,00');
     await expect(dialog(page).getByTestId('uncovered-san')).toContainText('15,00');
-    const date=dialog(page).getByLabel('Data efetiva');
-    await date.fill('2080-12-01');
-    await batch(page).click();
-    await invalid(date,/pertencer ao mês/);
-    await date.fill(period+'-18');
+    const rejectedDate=await post(finance,period,(await snapshot(finance,period)).revision,{type:'recordSuggestedTransfers',period,date:'2080-12-01',routes:[{source:'a:act-r',destination:'a:san',amount:3500}]});
+    expect(rejectedDate.status()).toBe(422);
+    const date=dialog(page).getByRole('button',{name:/^Data efetiva/});
+    const calendar=calendarPopup(date);
+    await date.click();
+    await expect(calendar.getByRole('button',{name:'Mês seguinte'})).toHaveCount(0);
+    await expect(calendarDay(calendar,'2080-12-01')).toHaveCount(0);
+    await calendar.getByRole('button',{name:'Cancelar'}).click();
+    await chooseDate(dialog(page),period+'-18','Data efetiva');
     await capture(page,'lote-revisto');
     await page.unroute('**/api/state*');
     let loseResponse=true;
@@ -177,7 +182,7 @@ test('compra vazia, prévia 40 → 60, erros no campo e recibo de pagamento',asy
   expect(m.events.map(e=>[e.type,e.amount,e.deltas])).toEqual([['execution',4000,{'a:act-r':-4000}],['total',2000,{'a:act-r':-2000}]]);
   expect(balanceOf(m,'a:act-r')).toBe(44000);
   const rent=page.getByTestId('line-review-rent');
-  const pay=rent.getByRole('button',{name:'Pagar',exact:true});
+  const pay=rent.getByRole('button',{name:'Pagar com ActivoBank A',exact:true});
   const detail=rent.getByRole('button',{name:'Detalhe de Habitação'});
   await pay.focus();
   await page.keyboard.press('Enter');
@@ -355,7 +360,7 @@ test('atualização em diálogo invalida a revisão e o percurso individual grav
   await launch(page).click();
   await dialog(page).getByTestId('route-moey-r-san').getByRole('button',{name:'Preparar esta transferência'}).click();
   await expect(amount(page)).toHaveValue('35,00');
-  await dialog(page).getByLabel('Data',{exact:true}).fill(period+'-13');
+  await chooseDate(dialog(page), period+'-13');
   await confirm(page).click();
   await expect(dialog(page)).toHaveCount(0);
   const saved=(await snapshot(finance,period)).state.months[period];

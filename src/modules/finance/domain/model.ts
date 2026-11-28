@@ -10,9 +10,10 @@ export interface Event {
   complete?:boolean; voided?:boolean; line?:Line; sourceNames?:Record<string,string>;
   allocations?:Record<string,number>; purchaseAmount?:number; corrects?:string; replacedBy?:string;
   reconciliation?:{source:string;calculated:number;observed:number};
+  reserveShortfall?:{source:string;unassigned:number};
   totalObservation?:{observed:number;realizedBefore:number;purchasesBefore:number};
   saving?:{reserveId:string;extra:number;transferId?:string};
-  savingParentId?:string; authorship?:'unknown';
+  savingParentId?:string; authorship?:'unknown'; createdAt?:string|null;
   reverses?:string; groupId?:string; historical?:boolean;
 }
 export interface Occurrence { id:string; definitionId:string; name:string; date:string; amount:number|null; accountId:string; reserveId?:string; state:'open'|'linked'|'dismissed'; lineId?:string }

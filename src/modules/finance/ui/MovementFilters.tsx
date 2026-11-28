@@ -1,7 +1,7 @@
 import { locale } from '../../../shared/i18n/pt-PT';
 import { useState } from 'react';
 import { Dialog } from '../../../shared/ui/Dialog';
-import { Select } from '../../../shared/ui/Select';
+import { Choice, Select } from '../../../shared/ui/Select';
 import { Icon } from '../../../shared/ui/Icon';
 
 type Order='name'|'plan'|'realized'|'pending'|'date';
@@ -68,8 +68,8 @@ export function MovementFilters({value,onApply,base=false,accounts,categories,ha
           <label>Agrupar por<Select options={groupOptions} emptyLabel="Sem opções" value={draft.group} onChange={e=>set('group',e.target.value as Group)}/></label>
           {accounts&&categories&&<>
             <div className="form-two">
-              <label>Banco<Select options={[allAccounts,...accounts]} emptyLabel="Sem bancos" value={draft.account} onChange={e=>set('account',e.target.value)}/></label>
-              <label>Categoria<Select options={[allCategories,...categories]} emptyLabel="Sem categorias" value={draft.category} onChange={e=>set('category',e.target.value)}/></label>
+              <Choice label="Banco" name="account" options={[allAccounts,...accounts]} emptyLabel="Sem bancos" value={draft.account} onChange={id=>set('account',id)}/>
+              <Choice label="Categoria" name="category" options={[allCategories,...categories]} emptyLabel="Sem categorias" value={draft.category} onChange={id=>set('category',id)}/>
             </div>
             <label>Estado<Select options={statuses} emptyLabel="Sem opções" value={draft.status} onChange={e=>set('status',e.target.value as Status)}/></label>
             <label className="checkbox"><input type="checkbox" checked={!!hasSnapshot&&draft.afterSnapshot} disabled={!hasSnapshot}

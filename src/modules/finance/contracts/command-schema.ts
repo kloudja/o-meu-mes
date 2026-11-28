@@ -27,6 +27,7 @@ const execution = z.strictObject({
   ...entry,
   description: text.exactOptional(),
   reserveAfter: cents.exactOptional(),
+  shortfall: z.strictObject({ available: cents, secondSource: text.nullable() }).exactOptional(),
 });
 const execute = z.strictObject({
   type: z.literal('execute'),

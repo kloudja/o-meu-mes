@@ -15,7 +15,7 @@ test('os cabeçalhos ordenam os movimentos e partilham a ordem com os filtros', 
   await expect(rows.first()).toHaveAttribute('data-testid', 'line-food');
 
   const rent = page.getByTestId('line-rent');
-  await rent.getByRole('button', { name: 'Pagar', exact: true }).click();
+  await rent.getByRole('button', { name: 'Pagar com ActivoBank A', exact: true }).click();
   await expect(rent).toContainText('Concluída');
   await sort(/^Realizado/).click();
   await expect(rows.last()).toHaveAttribute('data-testid', 'line-rent');
@@ -31,7 +31,8 @@ test('os cabeçalhos ordenam os movimentos e partilham a ordem com os filtros', 
   const filters = page.getByRole('dialog');
   const bank = filters.getByRole('combobox', { name: 'Banco', exact: true });
   await expect(filters.getByLabel('Ordenar por')).toHaveValue('name');
-  await bank.selectOption('act-r');
+  await bank.fill('ActivoBank A');
+  await filters.getByRole('option', { name: 'ActivoBank A', exact: true }).click();
   await filters.getByLabel('Ordenar por').selectOption('plan');
   await filters.getByRole('button', { name: 'Aplicar filtros' }).click();
   await expect(rows.first()).toHaveAttribute('data-testid', 'line-other');
@@ -44,7 +45,7 @@ test('os cabeçalhos ordenam os movimentos e partilham a ordem com os filtros', 
   await expect(rows.first()).toHaveAttribute('data-testid', 'line-food');
   await page.getByRole('button', { name: /^Filtros/ }).click();
   await expect(filters.getByRole('combobox', { name: 'Ordem', exact: true })).toHaveValue('desc');
-  await expect(bank).toHaveValue('act-r');
+  await expect(bank).toHaveValue('ActivoBank A');
   await page.keyboard.press('Escape');
   const activeFilters=page.getByRole('list',{name:'Filtros ativos'});
   await activeFilters.getByRole('button',{name:'Remover filtro: ActivoBank A'}).click();
@@ -69,10 +70,11 @@ test('a sobra de uma despesa pode ser registada como reforço extra e pesquisada
   const dialog=page.getByRole('dialog');
   await dialog.getByRole('button',{name:'Parcial ou diferente'}).click();
   await dialog.getByLabel('Montante (€)',{exact:true}).fill('60');
-  const remainder=dialog.getByLabel('Para que poupança quer mover a sobra?');
+  const remainder=dialog.getByLabel('Para que poupança quer mover a sobra?', { exact: true });
   await expect(remainder).toHaveCount(0);
   await dialog.getByLabel('Concluir por este valor, mesmo que diferente do previsto').check();
-  await remainder.selectOption('em');
+  await remainder.fill('emergencia');
+  await dialog.getByRole('option', { name: /Emergência/ }).click();
   await expect(dialog).toContainText(/Sobraram 25,00/);
   await page.screenshot({path:info.outputPath('sobra-despesa.png')});
   await dialog.getByRole('button',{name:'Confirmar registo'}).click();
@@ -135,7 +137,8 @@ test('uma despesa usa o saldo observado depois do pagamento e aparece no gasto d
   await expect(dialog.locator('.money-input').first()).toContainText('€');
   await dialog.getByLabel('Banco de onde sai o dinheiro', { exact: true }).fill('Moey');
   await dialog.getByRole('option', { name: 'Moey! B', exact: true }).click();
-  await dialog.getByLabel('Poupança usada para pagar (opcional)').selectOption('gas');
+  await dialog.getByLabel('Poupança usada para pagar (opcional)', { exact: true }).fill('Gasolina');
+  await dialog.getByRole('option', { name: /Gasolina/ }).click();
   await dialog.getByLabel('Quanto ficou na poupança após a despesa? (€)').fill('44,75');
   await dialog.getByRole('button', { name: 'Confirmar', exact: true }).click();
   await expect(dialog).toHaveCount(0);
@@ -157,7 +160,7 @@ test('uma despesa usa o saldo observado depois do pagamento e aparece no gasto d
   await expect(rows.filter({ hasText: 'Gasolina' })).toContainText(/Usado da poupança · 15,25/);
   await goToScreen(page, 'Poupanças');
   await expect(gas.locator('.balance-value')).toHaveText(/44,75/);
-  await expect(gas.getByText('Retirado este mês', { exact: true }).locator('..')).toContainText('15,25');
+  await expect(gas.getByText('Gasto a partir desta poupança', { exact: true }).locator('..')).toContainText('15,25');
   const { state }: { state: State } = await (await finance.read('2026-11')).json();
   const month = state.months['2026-11'];
   expect(month.initials['r:gas']).toBe(6000);
@@ -256,7 +259,7 @@ for (const { amount, actual, deviation, cents, partial } of [
     const detailValue = (label: string) => dialog.locator('dl > div').filter({ has: page.getByText(label, { exact: true }) }).locator('dd');
     await expect(dialog.locator('dl > div').filter({ hasText: /^Plano inicial/ }).locator('dd')).toContainText('100,00');
     await expect(detailValue('Objetivo do mês')).toContainText('100,00');
-    await expect(detailValue('Já poupado para o objetivo')).toContainText(actual);
+    await expect(detailValue('Reforçado para o objetivo este mês')).toContainText(actual);
     await expect(detailValue('Falta poupar')).toContainText('0,00');
     await expect(detailValue('Desvio realizado face ao plano atual')).toContainText(deviation);
     const readEvents = async () => {

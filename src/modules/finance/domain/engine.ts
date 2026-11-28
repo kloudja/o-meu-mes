@@ -2,7 +2,7 @@ import { aid, rid, type State, type Month, type Line, type Event } from './model
 import { amount, sum, fail, validDate, validPeriod, validId, validName } from './validation';
 import { accountFunding, transferRoutes } from './funding';
 import { money } from './money';
-import { activeEvents, realized, completed, pending, effects, balance, plannedSource, planTotal, canDeleteAccount, occurrenceLineId, linkableExpenses, savingGoals, freeSaving, defaultReserveInitial, sourceTotals, summary, totalUnallocated, accumulatedTotal } from './projections';
+import { activeEvents, realized, completed, pending, effects, balance, plannedSource, planTotal, canDeleteAccount, occurrenceLineId, linkableExpenses, savingGoals, freeSaving, defaultReserveInitial, sourceTotals, summary, totalUnallocated, accumulatedTotal, unassignedExpenseTotal } from './projections';
 import { newMonth } from './months';
 import { type FinancialAction, type SavingEntry, type Action, canonical } from './actions';
 export { DomainError } from './validation';
@@ -21,6 +21,7 @@ function validateResult(s:State,m:Month){
   }
   for(const l of m.lines){if(realized(m,l.id)<0)fail('DEPENDENCY','A anulação deixaria o gasto negativo. Corrija primeiro os ajustes dependentes.');pending(m,l);}
   summary(s,m);
+  unassignedExpenseTotal(m);
   for(const kind of ['expense','income','saving','investment'] as const)planTotal(m,kind);
   for(const source of Object.keys(m.initials))sourceTotals(s,m,source);
   // Validate all visible aggregate balances as well as each origin separately.
@@ -132,7 +133,19 @@ export function transact(state:State,action:Action,requestId:string):State {
     }
     if(a.reserveAfter!==undefined&&(l.kind!=='expense'||!reserve||m.initials[a.source]!=null||Object.hasOwn(a.initials??{},a.source)||a.includedInTotal))
       fail('RESERVE_BALANCE','Só pode indicar o total após o pagamento quando a poupança ainda está por confirmar.');
-    applyInitials(a.initials,[a.source,...(l.kind==='saving'?[rid(l.reserveId!)]:[])]);
+    const secondSource=a.shortfall?.secondSource;
+    if(a.shortfall){
+      if(l.kind!=='expense'||!reserve||a.total||a.includedInTotal||a.reserveAfter!==undefined||m.initials[a.source]==null)
+        fail('SHORTFALL','A repartição exige uma despesa com saldo conhecido na primeira poupança.');
+      if(secondSource!==null){
+        if(!secondSource||secondSource===a.source)fail('SHORTFALL','Escolha uma segunda origem diferente da primeira.');
+        const {account,reserve:secondReserve}=sourceInfo(secondSource);
+        const bank=account??s.accounts.find(bank=>bank.id===secondReserve?.accountId);
+        if(!bank||bank.restricted||(bank.archived&&!Object.hasOwn(correction?.deltas??{},secondSource)))
+          fail('SHORTFALL','Escolha uma segunda origem disponível e sem restrições.');
+      }
+    }
+    applyInitials(a.initials,[a.source,...(l.kind==='saving'?[rid(l.reserveId!)]:[]),...(secondSource?[secondSource]:[])]);
     if(l.kind==='saving')initializeReserve(l.reserveId!);
     let n=a.amount;
     let allocations:Record<string,number>={};
@@ -164,11 +177,24 @@ export function transact(state:State,action:Action,requestId:string):State {
           fail('RESERVE_BALANCE','O saldo estimado não cobre o débito. Indique o total da poupança para confirmar este registo.');
       }
     }
-    knownBalance(a.source);
-    if(l.kind!=='income'&&n>0)requireFunds(a.source,n,l.kind==='expense'?'pagar':'registar');
+    const available=knownBalance(a.source);
     const deltas:Record<string,number>={[a.source]:l.kind==='income'?n:-n};
+    let reserveShortfall:Event['reserveShortfall'];
+    if(a.shortfall){
+      if(available!==a.shortfall.available||available<0||available>=n)
+        fail('CONFLICT','O saldo da primeira poupança mudou. Reveja a repartição da despesa.');
+      const remaining=n-available;
+      deltas[a.source]=-available;
+      if(secondSource){
+        const secondBalance=knownBalance(secondSource,'SHORTFALL');
+        if(secondBalance<remaining)
+          fail('SHORTFALL',`${sourceLabel(secondSource)} tem ${money(secondBalance)} disponíveis. A segunda origem precisa de cobrir ${money(remaining)}.`);
+        deltas[secondSource]=-remaining;
+      }
+      reserveShortfall={source:a.source,unassigned:secondSource?0:remaining};
+    }else if(l.kind!=='income'&&n>0)requireFunds(a.source,n,l.kind==='expense'?'pagar':'registar');
     if(l.kind==='saving')deltas[rid(l.reserveId!)]=n;
-    event({lineId:l.id,line:l,amount:n,date:a.date,description:l.kind==='expense'&&!a.total?a.description?.trim()||undefined:undefined,note:a.total?'Ajuste conciliado do total acumulado':l.kind==='saving'?'Reforço de poupança':l.kind==='investment'?'Aplicação em investimento':l.kind==='income'?'Recebimento':'Pagamento / compra',type:a.total?'total':'execution',deltas,complete:a.complete,allocations,totalObservation},id);
+    event({lineId:l.id,line:l,amount:n,date:a.date,description:l.kind==='expense'&&!a.total?a.description?.trim()||undefined:undefined,note:a.total?'Ajuste conciliado do total acumulado':l.kind==='saving'?'Reforço de poupança':l.kind==='investment'?'Aplicação em investimento':l.kind==='income'?'Recebimento':'Pagamento / compra',type:a.total?'total':'execution',deltas,complete:a.complete,allocations,totalObservation,...(reserveShortfall?{reserveShortfall}:{})},id);
   };
   const saving=(entry:SavingEntry)=>{
     const reserve=s.reserves.find(r=>r.id===entry.reserveId);

@@ -50,11 +50,11 @@ for (const width of [1366, 360, 390]) {
     await expect(page.locator('main')).toBeFocused();
     await goToScreen(page,'Plano e movimentos');
     if (width < 700) {
-      for (const name of ['Pagar', 'Detalhe de Habitação']) {
+      for (const name of ['Pagar com ActivoBank A', 'Detalhe de Habitação']) {
         expect((await page.getByTestId('line-rent').getByRole('button', { name, exact: true }).boundingBox())!.height).toBeGreaterThanOrEqual(44);
       }
     }
-    await page.getByTestId('line-rent').getByRole('button', { name: 'Pagar', exact: true }).click();
+    await page.getByTestId('line-rent').getByRole('button', { name: 'Pagar com ActivoBank A', exact: true }).click();
     await page.getByRole('button', { name: 'Detalhe de Habitação', exact: true }).click();
     await page.keyboard.press('Shift+Tab');
     await expect(d(page).getByRole('button', { name: 'Fechar', exact: true })).toBeFocused();
@@ -102,7 +102,7 @@ for (const width of [1366, 360, 390]) {
     const reserve = page.locator('.account-card').filter({ has: page.getByRole('heading', { name: 'Fundo Emergência', exact: true }) });
     await expect(reserve.locator('.balance-value')).toContainText('300,00');
     await goToScreen(page, 'Plano e movimentos');
-    await page.getByTestId('line-health').getByRole('button', { name: 'Pagar', exact: true }).click();
+    await page.getByTestId('line-health').getByRole('button', { name: 'Pagar com Fundo Emergência', exact: true }).click();
     await goToScreen(page, 'Poupanças');
     await expect(reserve.locator('.balance-value')).toContainText('260,00');
     await goToScreen(page, 'Contas');

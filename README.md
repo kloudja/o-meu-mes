@@ -93,7 +93,7 @@ Para investigar uma falha, abra **Actions → CI**, escolha a execução do comm
 
 ## Alojamento
 
-A primeira instalação restrita no VPS Linux com Docker e Caddy concluiu o deployment em 24/11/2026, na [corrida 44942187836, tentativa 4](https://github.com/kloudja/o-meu-mes/actions/runs/44942187836). O HTTPS sem credenciais respondeu 401, como previsto pela proteção adicional. Faltam os percursos autenticados, a entrega real de email e a verificação de backup/restauro no destino descritos no guia.
+A versão `3fce0bf` concluiu o deployment no VPS em 24/11/2026, na [corrida 45509910966](https://github.com/kloudja/o-meu-mes/actions/runs/45509910966), incluindo a verificação da página inicial na imagem exata. A proteção HTTP adicional foi depois removida no host a pedido do utilizador: o endereço público mostra diretamente o formulário da aplicação, que gere sessões e permissões. O formulário foi observado no navegador, com HTTP 200, e as APIs recusaram pedidos sem sessão. A operação está descrita na secção 5.4 do guia. Faltam os percursos autenticados, a entrega real de email e a verificação de backup/restauro no destino descritos no guia.
 
 A verificação seguinte identificou uma regra de loopback ainda aplicada à página inicial, que mostrava 404 depois das credenciais Caddy. Esta revisão aceita o domínio exato configurado, reforça a prontidão com a página HTML e acrescenta o teste de navegador desse domínio. Confirmar a nova imagem no VPS conforme a secção 5.3 do guia; o sucesso da corrida anterior não prova que a página carregava.
 

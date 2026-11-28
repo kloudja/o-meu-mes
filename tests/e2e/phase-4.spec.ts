@@ -1,3 +1,4 @@
+import { chooseDate } from './calendar';
 import { goToScreen } from './navigation';
 import { expect, test, type FinanceApi } from './application';
 import type { Page } from '@playwright/test';
@@ -182,7 +183,7 @@ test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({pa
   ]){
     await page.getByRole('button',{name:'Novo recorrente'}).click();
     await dialog(page).getByRole('textbox',{name:'Nome',exact:true}).fill(definition.name);
-    await dialog(page).getByLabel('Data de referência').fill(definition.date);
+    await chooseDate(dialog(page), definition.date, 'Data de referência');
     await dialog(page).getByLabel('Periodicidade').selectOption(definition.frequency);
     await expect(dialog(page).getByLabel('Conta (opcional)',{exact:true})).toHaveValue('');
     await confirm(page).click();
@@ -261,8 +262,9 @@ test('grava agenda, data e plano inicial, reabre e preserva os saldos',async({pa
 
   const definition=page.locator('.definition-row').filter({hasText:longName});
   await definition.getByRole('button',{name:'Editar',exact:true}).click();
-  await dialog(page).getByLabel('Data de referência').fill('2024-02-28');
-  await dialog(page).getByLabel('Poupança usada para pagar (opcional)').selectOption('phase4-reserve');
+  await chooseDate(dialog(page), '2024-02-28', 'Data de referência');
+  await dialog(page).getByLabel('Poupança usada para pagar (opcional)', { exact: true }).fill('Reserva de teste');
+  await dialog(page).getByRole('option', { name: /Reserva de teste/ }).click();
   await expect(dialog(page).getByLabel('Conta (opcional)',{exact:true})).toHaveValue('Moey! A');
   await dialog(page).getByLabel('Gerar lembretes nos novos meses').uncheck();
   await confirm(page).click();

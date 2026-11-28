@@ -4,7 +4,7 @@ import { DuplicateConfirmationRequired, type usePersistentStore } from '@/module
 import { newRequestId } from '@/modules/finance/client/requestId';
 import type { Event, Month, State } from '@/modules/finance/domain/model';
 import { DomainError } from '../domain/validation';
-import { accumulatedTotal, activeEvents, balance, canDeleteAccount, completed, defaultReserveInitial, effects, freeSaving, previousSavingBalance, reserveUse, savingGoals, savingProgress, totalUnallocated, initialPlan, linkableExpenses, obligations, pending, planTotal, realized } from '../domain/projections';
+import { accumulatedTotal, activeEvents, balance, canDeleteAccount, completed, defaultReserveInitial, effects, freeSaving, previousSavingBalance, reserveUse, savingGoals, savingProgress, totalUnallocated, initialPlan, linkableExpenses, obligations, pending, plannedSource, planTotal, realized, unassignedExpenseTotal } from '../domain/projections';
 import { type Action, type FinancialAction } from '../domain/actions';
 import type { DuplicateNotice } from '../contracts/command';
 import { aid, rid, type Account, type Line, type Kind, type Recurring, type Reserve } from '@/modules/finance/domain/model';
@@ -14,6 +14,7 @@ import { Choice, Select } from '../../../shared/ui/Select';
 import { Icon } from '../../../shared/ui/Icon';
 import { InitialBalances } from './InitialBalances';
 import { AccountFunding } from './AccountFunding';
+import { DateField } from './DateField';
 import { RecurringPayments } from './RecurringPayments';
 import type { FinanceModal as Modal, FinanceMemory } from '../client/draft';
 import { previousPeriod } from '../domain/projections';
@@ -22,7 +23,7 @@ import { MovementList } from './MovementList';
 import { ActiveMovementFilters, defaultMovementView, MovementFilters } from './MovementFilters';
 import { SearchField } from '../../../shared/ui/SearchField';
 import { compareNames, matchesText } from '@/shared/i18n/text';
-import { validPeriod, validDate, validName, daysInMonth, sum } from '@/modules/finance/domain/validation';
+import { validPeriod, validDate, validName, sum } from '@/modules/finance/domain/validation';
 import { accountFunding, reserveFunding } from '@/modules/finance/domain/funding';
 
 import { navigation, type Screen, screenDescriptions, baseKinds, kindLabel, monthKindLabel, monthKindTotal, createLabel, noAccounts } from '../i18n/pt-PT';
@@ -53,7 +54,7 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
   const [modal,setModal]=useState<Modal|null>(restored?.modal??null),[values,setValues]=useState<Record<string,string>>(restored?.values??{}),[error,setError]=useState(''),[initialErrorSource,setInitialErrorSource]=useState(''),[globalError,setGlobalError]=useState(''),[notice,setNotice]=useState(''),[search,setSearch]=useState('');
   useLayoutEffect(()=>{
     memory.space=space;memory.period=s.selected;memory.screen=screen;
-    memory.draft=modal&&!busy&&!uncertain?{space,period:s.selected,modal,values}:undefined;
+    memory.draft=modal&&modal.kind!=='accountHistory'&&!busy&&!uncertain?{space,period:s.selected,modal,values}:undefined;
   },[space,memory,s.selected,screen,modal,values,busy,uncertain]);
   const [errorCode,setErrorCode]=useState('');
   const [errorAttempt,setErrorAttempt]=useState(0);
@@ -139,7 +140,11 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
     const source=Object.keys(event.deltas)[0];
     const result=event.totalObservation?`Total gasto de ${money(event.totalObservation.observed)} · ${totalEffect(event.amount)}`
       :`${money(event.amount)} pagos${event.description?` · ${event.description}`:''}`;
-    return `Gravação confirmada · ${result} · ${dateLabel(event.date)} · ${sourceName(source)}`;
+    const funding=event.reserveShortfall?[
+      ...Object.entries(event.deltas).map(([id,delta])=>`${money(-delta)} de ${sourceName(id)}`),
+      ...(event.reserveShortfall.unassigned?[`${money(event.reserveShortfall.unassigned)} por atribuir`]:[]),
+    ].join(' · '):sourceName(source);
+    return `Gravação confirmada · ${result} · ${dateLabel(event.date)} · ${funding}`;
   };
   const recentPayment=receipt?.period===m.period?activeEvents(m).find(event=>event.id===receipt.eventId):undefined;
   const reserveForm=s.reserves.find(r=>r.id===(modal?.reserveId??value('reserve')));
@@ -151,6 +156,7 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
   const effectiveSource=value('kind')==='expense'&&value('reserve')?rid(value('reserve')):value('account')?aid(value('account')):'';
   const goals=reserveForm?savingGoals(m,reserveForm.id):[];
   const enteredAmount=(()=>{try{return parseMoney(value('amount'));}catch{return null;}})();
+  const correction=modal?.kind==='correct'?m.events.find(e=>e.id===modal.eventId):undefined;
   const finishMovement=value('complete')==='true';
   const expenseRemainder=modal?.kind==='payment'&&selectedLine?.kind==='expense'&&selectedLine.plan!==null&&
     !selectedLine.variable&&finishMovement&&enteredAmount!==null
@@ -178,16 +184,31 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
     :modal?.kind==='save'&&!savingWithoutTransfer?[value('source'),savingBank,savingSource]
     :immediate?[effectiveSource]:[];
   const expenseSource=immediate&&value('kind')==='expense'?effectiveSource:
-    modal?.kind==='payment'&&selectedLine?.kind==='expense'&&!['total','detail'].includes(value('mode'))?value('source'):'';
-  const reserveAfterSource=expenseSource.startsWith('r:')&&m.initials[expenseSource]==null?expenseSource:'';
-  const missingBalances=[...new Set(operationSources)].filter(id=>!!id&&id!==reserveAfterSource&&m.initials[id]==null).map(id=>({
-    id,name:sourceName(id),suggestion:id.startsWith('r:')?previousSavingBalance(s,m,id.slice(2)):null
+    (modal?.kind==='payment'&&selectedLine?.kind==='expense'&&!['total','detail'].includes(value('mode'))||
+      correction?.type==='execution'&&correction.line?.kind==='expense')?value('source'):'';
+  const fromReserve=expenseSource.startsWith('r:');
+  const reserveAfterSource=fromReserve&&m.initials[expenseSource]==null?expenseSource:'';
+  const expenseAmount=immediate&&value('variable')==='true'
+    ?(()=>{try{return parseMoney(value('actual'));}catch{return null;}})():enteredAmount;
+  const reserveBalance=fromReserve?balance(m,expenseSource):null;
+  const available=reserveBalance===null?null:sum([reserveBalance,-(correction?.deltas[expenseSource]??0)]);
+  const shortage=available!==null&&expenseAmount!==null&&expenseAmount>available?expenseAmount-available:0;
+  const shortfallKey=`shortfall:${expenseSource}`;
+  const shortfallChoice=shortage?value(shortfallKey):'';
+  const secondSource=shortfallChoice&&shortfallChoice!=='unassigned'?shortfallChoice:'';
+  const missingBalances=[...new Set([...operationSources,secondSource])].filter(id=>!!id&&id!==reserveAfterSource&&m.initials[id]==null).map(id=>({
+    id,name:sourceName(id),required:id===secondSource,suggestion:id.startsWith('r:')?previousSavingBalance(s,m,id.slice(2)):null
   }));
   function collectInitials(){
-    return Object.fromEntries(missingBalances.filter(source=>!source.id.startsWith('r:')||value(`initial:${source.id}`).trim()).map(source=>{
+    return Object.fromEntries(missingBalances.filter(source=>source.required||!source.id.startsWith('r:')||value(`initial:${source.id}`).trim()).map(source=>{
       try{return [source.id,parseMoney(value(`initial:${source.id}`))];}
       catch{setInitialErrorSource(source.id);throw new DomainError('INITIAL_VALUE',`Indique um saldo inicial válido para ${source.name}. Se começou vazio, indique 0,00 €.`);}
     }));
+  }
+  function collectShortfall(){
+    if(!shortage||available===null)return undefined;
+    if(!shortfallChoice)throw new DomainError('SHORTFALL','Escolha outra origem ou prossiga com a parcela por atribuir.');
+    return {available,secondSource:secondSource||null};
   }
   function collectReserveAfter(){
     const input=value(`reserveAfter:${reserveAfterSource}`);
@@ -228,15 +249,16 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
   function openCorrection(entry:Event){
     const deltas=Object.entries(entry.deltas);
     const funding=entry.saving?.transferId ? m.events.find(e=>e.id===entry.saving!.transferId) : undefined;
-    const source=entry.reconciliation?.source??(funding?Object.entries(funding.deltas):deltas).find(([,n])=>n<0)?.[0]??deltas[0]?.[0]??'';
+    const source=entry.reserveShortfall?.source??entry.reconciliation?.source??(funding?Object.entries(funding.deltas):deltas).find(([,n])=>n<0)?.[0]??deltas[0]?.[0]??'';
     const amount=entry.totalObservation?.observed??entry.reconciliation?.observed??entry.purchaseAmount??
       (entry.type==='transfer'?(deltas.find(([,n])=>n>0)?.[1]??0):entry.amount+(entry.saving?.extra??0));
     setValues({source,date:entry.date,amount:inputMoney(amount),note:entry.note,description:entry.description??'',
-      destination:deltas.find(([,n])=>n>0)?.[0]??'',complete:String(!!entry.complete)});
+      destination:deltas.find(([,n])=>n>0)?.[0]??'',complete:String(!!entry.complete),
+      [`shortfall:${source}`]:entry.reserveShortfall?(deltas.find(([id])=>id!==source)?.[0]??'unassigned'):''});
     setError('');setErrorCode('');
-    setModal({kind:'correct',eventId:entry.id,requestId:newRequestId(),revision:store.revision});
+    setModal({kind:'correct',eventId:entry.id,requestId:newRequestId(),revision:store.revision,
+      ...(modal?.kind==='accountHistory'?{source:modal.source,returnTo:modal.returnTo}:{})});
   }
-  const correction=modal?.kind==='correct'?m.events.find(e=>e.id===modal.eventId):undefined;
   function open(kind:string,options:Partial<Omit<Modal,'kind'|'requestId'|'revision'>>&{kind?:Kind}={}){
     if(readOnly&&kind!=='detail')return;
     if(busy||uncertain||conflict)return;
@@ -247,7 +269,7 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
       if(month<12)v.period=s.selected.slice(0,5)+String(month+1).padStart(2,'0');
       else if(year<9999)v.period=String(year+1).padStart(4,'0')+'-01';
     }
-    if(l)v={...v,name:l.name,amount:kind==='payment'&&l.variable?'':inputMoney(kind==='payment'?pending(m,l):l.plan),account:l.accountId,category:l.categoryId,kind:l.kind,source:l.kind==='expense'&&l.reserveId?rid(l.reserveId):l.accountId?aid(l.accountId):'',reserve:l.reserveId??'',variable:l.variable?'true':'false',dueDate:l.dueDate??''};
+    if(l)v={...v,name:l.name,amount:kind==='payment'&&l.variable?'':inputMoney(kind==='payment'?pending(m,l):l.plan),account:l.accountId,category:l.categoryId,kind:l.kind,source:l.accountId?plannedSource(l):'',reserve:l.reserveId??'',variable:l.variable?'true':'false',dueDate:l.dueDate??''};
     if(options.source){
       const suggestion=kind==='initial'&&options.source.startsWith('r:')?previousSavingBalance(s,m,options.source.slice(2)):null;
       v={...v,source:options.source,amount:inputMoney(balance(m,options.source)??suggestion?.amount)};
@@ -278,7 +300,13 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
     if(kind==='category'&&options.id)v.name=s.categories.find(c=>c.id===options.id)!.name;
     setValues(v);setError('');setErrorCode('');setInitialErrorSource('');setModal({...options,kind,requestId:newRequestId(),revision:store.revision});
   }
-  function close(){if(busy)return;setModal(null);setError('');setErrorCode('');setInitialErrorSource('');}
+  function close(){
+    if(busy)return;
+    setModal(modal?.kind==='correct'&&modal.source
+      ?{kind:'accountHistory',source:modal.source,returnTo:modal.returnTo,requestId:newRequestId()}
+      :null);
+    setError('');setErrorCode('');setInitialErrorSource('');
+  }
   function showRemainderSaving(){
     const next=pendingRemainderSaving.current;
     pendingRemainderSaving.current=null;
@@ -289,12 +317,22 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
     setModal({kind:'save',reserveId:next.reserve.id,fromExpenseRemainder:true,returnTo:`detail-${next.lineId}`,requestId:newRequestId(),revision:store.getRevision?.()});
     return true;
   }
-  async function full(l:Line){
+  function quickExecution(l:Line){
     const amount=pending(m,l);
-    const source=l.kind==='expense'&&l.reserveId?rid(l.reserveId):aid(l.accountId);
-    const requiredSources=[source,...(l.kind==='saving'&&l.reserveId?[rid(l.reserveId)]:[])];
+    const source=plannedSource(l);
+    if(l.variable||!amount||!l.accountId||m.initials[source]==null)return null;
+    return {amount,source};
+  }
+  async function full(l:Line){
     if(busy||uncertain||conflict)return;
-    if(amount===null||amount===0||!l.accountId||requiredSources.some(id=>m.initials[id]==null)){
+    const execution=quickExecution(l);
+    if(!execution){
+      open('payment',{id:l.id,returnTo:`pay-${l.id}`});
+      setValues(v=>({...v,complete:'true'}));
+      return;
+    }
+    const {amount,source}=execution;
+    if(l.kind==='expense'&&source.startsWith('r:')&&(balance(m,source)??0)<amount){
       open('payment',{id:l.id,returnTo:`pay-${l.id}`});
       setValues(v=>({...v,complete:'true'}));
       return;
@@ -346,6 +384,7 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
         else if(correction.type==='saving')replacement={...details,type:'save',
           reserveId:correction.saving?.reserveId??correction.line!.reserveId!,lineId:correction.lineId,complete};
         else replacement={...details,type:'execute',lineId:correction.lineId!,complete,total:correction.type==='total',
+          shortfall:collectShortfall(),initials:collectInitials(),reserveAfter:collectReserveAfter(),
           description:value('description').trim(),includedInTotal:Object.keys(correction.allocations??{})[0]&&
             correction.type==='detail'?Object.keys(correction.allocations!)[0]:undefined};
         action={type:'correct',id:correction.id,replacement};
@@ -357,7 +396,7 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
         const cents=amount();
         validDate(value('date'),m.period);
         if(mode==='detail'&&!value('totalId'))throw new DomainError('DETAIL','Escolha o ajuste que já inclui esta compra.');
-        action={type:'execute',lineId:modal.id!,amount:cents,date:value('date'),source:sourceId(),complete:mode!=='detail'&&finishMovement,total:mode==='total',description,initials:collectInitials(),includedInTotal:mode==='detail'?value('totalId'):undefined,reserveAfter:collectReserveAfter()};
+        action={type:'execute',lineId:modal.id!,amount:cents,date:value('date'),source:sourceId(),complete:mode!=='detail'&&finishMovement,total:mode==='total',description,shortfall:collectShortfall(),initials:collectInitials(),includedInTotal:mode==='detail'?value('totalId'):undefined,reserveAfter:collectReserveAfter()};
         if(mode==='detail')feedback='Compra identificada no total existente. O gasto e o saldo mantêm-se.';
         else if(selectedLine?.kind==='expense'&&mode!=='total'&&description)feedback=`Compra «${description}» de ${money(cents)} registada em ${selectedLine.name}. Gravação local confirmada.`;
         break;
@@ -378,7 +417,7 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
           catch(e){throw new DomainError(variable?'ACTUAL':'AMOUNT',(e as Error).message);}
           if(!actual)throw new DomainError(variable?'ACTUAL':'AMOUNT','Indique um montante superior a zero.');
           validDate(value('date'),m.period);
-          execution={amount:actual,date:value('date'),source:effectiveSource,initials:collectInitials(),description:variable?value('description').trim():undefined,reserveAfter:collectReserveAfter()};
+          execution={amount:actual,date:value('date'),source:effectiveSource,shortfall:collectShortfall(),initials:collectInitials(),description:variable?value('description').trim():undefined,reserveAfter:collectReserveAfter()};
         }
         action={type:'line',target:modal.target,line:{id,name,kind,plan:cents,accountId:account,categoryId:category,reserveId:kind==='saving'||kind==='expense'?reserve||undefined:undefined,variable,dueDate:modal.target?undefined:dueDate()},execution};
         if(modal.target==='base')feedback='Modelo Base guardado para os meses ainda por criar.';
@@ -448,7 +487,7 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
         (!action.total||action.complete||action.amount!==realized(m,action.lineId))
         ?{period:m.period,lineId:action.lineId,eventId:modal.requestId}:null;
       pendingReceipt.current=confirmation;
-      const savingDestination=expenseRemainder>0?remainderReserves.find(reserve=>reserve.id===value('remainderReserve')):undefined;
+      const savingDestination=expenseRemainder>0&&!shortage?remainderReserves.find(reserve=>reserve.id===value('remainderReserve')):undefined;
       pendingRemainderSaving.current=action.type==='execute'&&savingDestination
         ?{reserve:savingDestination,amount:expenseRemainder,source:action.source,date:dateDefault(),lineId:action.lineId}:null;
       const result=await run(action,confirmation?'':feedback,modal.requestId,modal.revision);
@@ -552,18 +591,20 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
        const date=baseKind?undefined:movementDate(l);
        const reserve=l.reserveId?s.reserves.find(r=>r.id===l.reserveId):undefined;
        const reserveSpent=saving&&reserve?reserveUse(m,reserve.id).spent:0;
+       const paymentSource=!baseKind&&l.kind==='expense'&&quickExecution(l)?.source;
+       const paymentLabel=paymentSource?`Pagar com ${reserve?reserveLabel(reserve):sourceName(paymentSource)}`:'Pagar';
        return <article className={`movement${baseKind?' base-row':''}${wideAmounts?' wide-amounts':''}`} key={l.id} data-testid={`line-${l.id}`}>
        <div className="movement-name"><button className="name-button" disabled={(readOnly&&!!baseKind)||busy||uncertain||conflict} onClick={()=>open(baseKind?'line':'detail',{id:l.id,target:baseKind?'base':undefined})}>{l.name}</button><div>{accountBadge(l.accountId)}{reserve&&l.kind==='expense'&&<span className="tiny"> · {sourceName(rid(reserve.id))}</span>}{reserve&&l.kind==='saving'&&reserve.accountId!==l.accountId&&<span className="tiny"> → {nameOf(reserve.accountId)}</span>}{date&&<time className="tiny" dateTime={date}> · {dateLabel(date)}</time>}</div>{!baseKind&&<span className={`status ${completed(m,l.id)?'done':realized(m,l.id)>0?'partial':''}`}>{status(l)}{excess>0&&status(l)!=='Excesso'?` · Excesso de ${money(excess)}`:excess>0?` de ${money(excess)}`:''}{addedAfterInitial(l)?' · Adicionado depois do plano inicial':m.snapshot&&initialPlan(m,l)!==l.plan?' · Plano alterado':''}</span>}{reserveSpent>0&&<span className="reserve-used">Usado da poupança · {money(reserveSpent)}</span>}</div>
        <div className="amount"><small>{baseKind?'Previsto':'Plano atual'}</small>{money(l.plan)}</div>
        {!baseKind&&<><div className="amount realized"><small>Realizado</small>{money(realized(m,l.id))}</div><div className="amount"><small>Falta</small>{money(pending(m,l))}</div></>}
        <div className="line-actions">{baseKind?<button className="button small" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('line',{id:l.id,target:'base'})}>Editar</button>:<>
-         {canRegisterLine(l)&&<button id={`pay-${l.id}`} data-pay className="button small primary-soft" disabled={readOnly||busy||uncertain||conflict} onClick={()=>saving?open('save',{id:l.id,reserveId:l.reserveId,returnTo:`detail-${l.id}`}):l.variable?open('payment',{id:l.id}):full(l)}>{l.variable?'Registar':l.kind==='income'?'Receber':saving?'Poupar':l.kind==='investment'?'Investir':'Pagar'}</button>}
+         {canRegisterLine(l)&&<button id={`pay-${l.id}`} data-pay className="button small primary-soft" disabled={readOnly||busy||uncertain||conflict} onClick={()=>saving?open('save',{id:l.id,reserveId:l.reserveId,returnTo:`detail-${l.id}`}):l.variable?open('payment',{id:l.id}):full(l)}>{l.variable?'Registar':l.kind==='income'?'Receber':saving?'Poupar':l.kind==='investment'?'Investir':paymentLabel}</button>}
          <button id={`detail-${l.id}`} className="icon-button detail-action" aria-label={`Detalhe de ${l.name}`} disabled={busy||uncertain||conflict} onClick={()=>open('detail',{id:l.id})}><span>Detalhe</span><Icon name="arrow" size={17}/></button>
        </>}</div>
        {payment&&receipt&&<PaymentFeedback key={payment.id} lineId={l.id} text={receiptText(payment)} expiresAt={receipt.expiresAt} onView={()=>open('detail',{id:l.id,eventId:payment.id,returnTo:`detail-${l.id}`})}/>}
     </article>;}}/>;}
 
-  const fieldCodes=['NAME','AMOUNT','ACTUAL','MONEY_LIMIT','ACCOUNT','CATEGORY','RESERVE','RESERVE_BALANCE','DUE_DATE','DATE','PERIOD','REMINDER','NOTE','DETAIL','TOTAL_BELOW_PURCHASES','SOURCE','TOTAL_SOURCE','FUNDS','RESTRICTED','DESTINATION','INITIAL_VALUE','GOAL','SAVING_EVENT'];
+  const fieldCodes=['NAME','AMOUNT','ACTUAL','MONEY_LIMIT','ACCOUNT','CATEGORY','RESERVE','RESERVE_BALANCE','DUE_DATE','DATE','PERIOD','REMINDER','NOTE','DETAIL','TOTAL_BELOW_PURCHASES','SOURCE','TOTAL_SOURCE','FUNDS','RESTRICTED','DESTINATION','INITIAL_VALUE','GOAL','SAVING_EVENT','SHORTFALL'];
   const fieldCode=modal?.kind!=='detail'&&(fieldCodes.includes(errorCode)||immediate&&errorCode==='INITIAL')&&
     (errorCode!=='RESERVE_BALANCE'||!!reserveAfterSource)&&
     (modal?.kind!=='save'||errorCode!=='DESTINATION')&&
@@ -580,19 +621,21 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
     ?r.accountId===value('account')
     :accounts.some(a=>a.id===r.accountId&&!a.restricted)||r.id===value('reserve'));
   const reserveChoices=s.reserves.map(r=>({id:r.id,name:`${reserveLabel(r)} · ${nameOf(r.accountId)}`}));
-  const reserveSelect=<label>{value('kind')==='saving'?'Poupança de destino':'Poupança usada para pagar (opcional)'}<Select
-    options={reserveChoices.filter(option=>reserveOptions.some(r=>r.id===option.id))}
+  const eligibleReserveChoices=reserveChoices.filter(option=>reserveOptions.some(r=>r.id===option.id));
+  const reserveSelect=<Choice label={value('kind')==='saving'?'Poupança de destino':'Poupança usada para pagar (opcional)'} name="reserve"
+    options={eligibleReserveChoices} clearLabel={value('kind')!=='saving'?'Sem poupança':undefined}
     emptyLabel={s.reserves.length&&modal?.kind==='line'&&value('kind')==='expense'?'Sem poupanças nesta conta':'Sem poupanças disponíveis'}
-    placeholder={value('kind')==='saving'?'Escolha a poupança':'Sem poupança'} value={value('reserve')}
-    aria-invalid={invalidField(...reserveCodes)} aria-describedby={invalidField(...reserveCodes)?'form-error':undefined} onChange={e=>{
-    const reserve=s.reserves.find(r=>r.id===e.target.value);
-    set('reserve',e.target.value);
+    value={value('reserve')} invalid={invalidField(...reserveCodes)} error={fieldError(...reserveCodes)} onChange={id=>{
+    const reserve=s.reserves.find(r=>r.id===id);
+    set('reserve',id);
     if(reserve&&value('kind')!=='saving')set('account',reserve.accountId);
-  }} required={value('kind')==='saving'}/>{fieldError(...reserveCodes)}</label>;
+  }} required={value('kind')==='saving'}/>;
   const focusAmount=((modal?.kind==='payment'||modal?.fromExpenseRemainder&&!!value('source'))&&missingBalances.length===0)||modal?.kind==='initial'||modal?.kind==='reconcile'||modal?.kind==='goal'&&!!reserveForm;
   const amountField=(label='Montante (€)',required=true,hint?:string)=><label>{label}<MoneyInput autoFocus={focusAmount} data-initial-focus={focusAmount||undefined} name="amount" aria-label={label} value={value('amount')} onValue={v=>set('amount',v)} placeholder={required?'0,00':'Por indicar'} required={required} aria-invalid={invalidField('AMOUNT','MONEY_LIMIT','TOTAL_BELOW_PURCHASES')} aria-describedby={invalidField('AMOUNT','MONEY_LIMIT','TOTAL_BELOW_PURCHASES')?'form-error':hint?'amount-hint':undefined}/>{hint&&<small id="amount-hint">{hint}</small>}{fieldError('AMOUNT','MONEY_LIMIT','TOTAL_BELOW_PURCHASES')}{!error&&totalPreviewError?.code==='TOTAL_BELOW_PURCHASES'&&<span className="inline-error">{totalPreviewError.message}</span>}</label>;
   const completionField=<label className="checkbox"><input type="checkbox" checked={finishMovement} onChange={e=>set('complete',e.target.checked?'true':'false')}/>Concluir por este valor, mesmo que diferente do previsto</label>;
-  const dateField=<label>{modal?.kind==='recurring'?'Data de referência':'Data'}<input name="date" aria-label={modal?.kind==='recurring'?'Data de referência':'Data'} type="date" value={value('date')} min={modal?.kind==='recurring'?undefined:`${s.selected}-01`} max={modal?.kind==='recurring'?undefined:`${s.selected}-${daysInMonth(Number(s.selected.slice(0,4)),Number(s.selected.slice(5)))}`} aria-invalid={invalidField('DATE')} aria-describedby={invalidField('DATE')?'form-error':undefined} onChange={e=>set('date',e.target.value)} required/>{fieldError('DATE')}</label>;
+  const dateField=<DateField label={modal?.kind==='recurring'?'Data de referência':'Data'} value={value('date')}
+    period={modal?.kind==='recurring'?undefined:s.selected} onChange={date=>set('date',date)}
+    invalid={invalidField('DATE')} describedBy={invalidField('DATE')?'form-error':undefined} error={fieldError('DATE')}/>;
   const sourceField=(label='Origem',field='source',options=sources)=>{
     const codes=field==='destination'?['DESTINATION']:['SOURCE','TOTAL_SOURCE','FUNDS','RESTRICTED'];
     return <Choice label={label} name={field} options={options} emptyLabel={modal?.otherBank?'Sem outros bancos disponíveis':noAccounts} value={value(field)} onChange={v=>set(field,v)} required invalid={invalidField(...codes)} error={fieldError(...codes)}/>;
@@ -600,17 +643,37 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
   const accountCodes=immediate&&!value('reserve')?['ACCOUNT','FUNDS','SOURCE','RESTRICTED','INITIAL']:['ACCOUNT'];
   const accountLabel=modal?.kind==='recurring'?'Conta (opcional)':modal?.kind==='reserve'?'Banco onde está a poupança':modal?.kind==='goal'?'Banco de onde sai o reforço':
     modal?.kind==='line'?value('kind')==='income'?'Banco onde recebe o dinheiro':'Banco de onde sai o dinheiro':'Conta';
-  const accountField=<Choice label={accountLabel} name="account" options={s.accounts.filter(a=>(!a.archived||a.id===value('account'))&&(!(modal?.kind==='goal'||value('kind')==='saving')||!a.restricted))} emptyLabel={noAccounts} value={value('account')} onChange={setPlanAccount} required={modal?.kind!=='recurring'} invalid={invalidField(...accountCodes)} error={fieldError(...accountCodes)}/>;
-  const plannedDateField=<label>Data prevista (opcional)<input type="date" value={value('dueDate')} min={`${s.selected}-01`}
-    max={`${s.selected}-${daysInMonth(Number(s.selected.slice(0,4)),Number(s.selected.slice(5)))}`} onChange={e=>set('dueDate',e.target.value)}
-    aria-invalid={invalidField('DUE_DATE')} aria-describedby={invalidField('DUE_DATE')?'form-error':undefined}/>{fieldError('DUE_DATE')}</label>;
-  const categoryField=<Choice label="Categoria" name="category" options={s.categories.filter(c=>!c.archived||c.id===value('category'))} emptyLabel="Sem categorias disponíveis" value={value('category')} onChange={v=>set('category',v)} invalid={invalidField('CATEGORY')} error={fieldError('CATEGORY')}/>;
+  const accountField=<Choice label={accountLabel} name="account" options={s.accounts.filter(a=>(!a.archived||a.id===value('account'))&&(!(modal?.kind==='goal'||value('kind')==='saving')||!a.restricted))} emptyLabel={noAccounts} clearLabel={modal?.kind==='recurring'?'Sem conta':undefined} value={value('account')} onChange={setPlanAccount} required={modal?.kind!=='recurring'} invalid={invalidField(...accountCodes)} error={fieldError(...accountCodes)}/>;
+  const plannedDateField=<DateField label="Data prevista (opcional)" value={value('dueDate')} period={s.selected}
+    optional onChange={date=>set('dueDate',date)} invalid={invalidField('DUE_DATE')}
+    describedBy={invalidField('DUE_DATE')?'form-error':undefined} error={fieldError('DUE_DATE')}/>;
+  const categoryField=<Choice label="Categoria" name="category" options={s.categories.filter(c=>!c.archived||c.id===value('category'))} emptyLabel="Sem categorias disponíveis" clearLabel="Sem categoria" value={value('category')} onChange={v=>set('category',v)} invalid={invalidField('CATEGORY')} error={fieldError('CATEGORY')}/>;
   const reserveAfterField=reserveAfterSource&&<label>Quanto ficou na poupança após a despesa? (€)
     <MoneyInput value={value(`reserveAfter:${reserveAfterSource}`)} onValue={v=>set(`reserveAfter:${reserveAfterSource}`,v)} placeholder="Opcional"
       aria-invalid={invalidField('RESERVE_BALANCE')} aria-describedby={invalidField('RESERVE_BALANCE')?'form-error':'reserve-after-hint'}/>
     <small id="reserve-after-hint">Indique o total que ficou em {sourceName(reserveAfterSource)} depois de pagar. Em branco, o cálculo parte de {money(defaultReserveInitial(s,m,reserveAfterSource.slice(2)))} antes desta despesa.</small>
     {fieldError('RESERVE_BALANCE')}
   </label>;
+  const eligibleSecondOrigin=(bank:Account|undefined,source:string)=>bank&&!bank.restricted&&
+    (!bank.archived||Object.hasOwn(correction?.deltas??{},source));
+  const secondBanks=s.accounts.filter(a=>eligibleSecondOrigin(a,aid(a.id)));
+  const secondReserves=s.reserves.filter(r=>rid(r.id)!==expenseSource&&
+    eligibleSecondOrigin(s.accounts.find(a=>a.id===r.accountId),rid(r.id)));
+  const paymentShortfall=shortage>0&&<div className="preview payment-shortfall" role="group" aria-label="Repartição da despesa">
+    <p><strong>{money(expenseAmount)}</strong> de despesa · <strong>{money(available)}</strong> disponíveis em {sourceName(expenseSource)} · <strong>{money(shortage)}</strong> em falta.</p>
+    <Choice label="Segunda origem" name="secondSource" value={shortfallChoice} required
+      options={[
+        ...secondReserves.map(r=>({id:rid(r.id),name:sourceName(rid(r.id))})),
+        ...secondBanks.map(a=>({id:aid(a.id),name:a.name})),
+        {id:'unassigned',name:'Prosseguir sem segunda origem'},
+      ]}
+      emptyLabel="Sem segundas origens disponíveis" onChange={id=>set(shortfallKey,id)}
+      invalid={invalidField('SHORTFALL')} error={fieldError('SHORTFALL')}/>
+    {shortfallChoice==='unassigned'&&<p>{money(shortage)} ficam por atribuir no histórico. A primeira poupança fica a {money(0)}.</p>}
+    <InitialBalances sources={missingBalances.filter(source=>source.id===secondSource)} values={values}
+      errorSource={initialErrorSource} error={error} onChange={(source,value)=>set(`initial:${source}`,value)}/>
+  </div>;
+  const unassignedExpenses=unassignedExpenseTotal(m);
   const nameField=<label>Nome<input data-initial-focus aria-label="Nome" value={value('name')} onChange={e=>set('name',e.target.value)} aria-invalid={invalidField('NAME')} aria-describedby={invalidField('NAME')?'form-error':undefined} required/>{fieldError('NAME')}</label>;
   let totalPreview:ReturnType<typeof accumulatedTotal>|undefined;
   let totalPreviewError:DomainError|undefined;
@@ -652,6 +715,7 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
     goal:goals.length?'Editar objetivo do mês':modal?.reserveId?'Quanto quer poupar este mês?':'Adicionar poupança ao mês',
     save:'Poupar',associateSaving:'Associar reforço já registado',
     detail:selectedLine?.name??'Detalhe',transfer:'Transferência própria',link:'Associar a movimento existente',
+    accountHistory:modal?.source?`Movimentos de ${sourceName(modal.source)}`:'Movimentos da conta',
     correct:'Corrigir registo',
     recurring:modal?.id?'Editar pagamento recorrente':'Novo pagamento recorrente',account:modal?.id?'Editar conta':'Adicionar conta',
     deleteAccount:'Eliminar conta',
@@ -686,6 +750,7 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
           <button className="button primary" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('account')}><Icon name="plus" size={17}/>Adicionar conta</button>
         </div>:screen==='base'?<button className="button primary" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('line',{target:'base'})}><Icon name="plus" size={17}/>Adicionar ao modelo</button>:null}
       </div>
+      {screen==='month'&&unassignedExpenses>0&&<p className="warning">{money(unassignedExpenses)} em despesas por atribuir a uma origem. Consulte ou corrija os registos em Plano e movimentos.</p>}
       {screen === 'month' && <MonthOverview state={s} month={m} disabled={readOnly||busy||uncertain||conflict}
         expandedMetric={expandedMetric} setExpandedMetric={setExpandedMetric}
         sourceName={sourceName} reserveLabel={reserve=>`${reserveLabel(reserve)} · ${nameOf(reserve.accountId)}`} reserveWarningText={reserveWarningText}
@@ -745,7 +810,10 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
                 <div><dt>Saldo previsto</dt><dd className={b!=null&&commit!=null&&b-commit<0?'negative':''}>{money(b==null||commit==null?null:b-commit)}</dd></div></dl>
               {b!=null&&commit!=null&&b<commit&&<p className="warning">Fundos insuficientes nesta conta.</p>}
               <button className="button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open(b==null?'initial':'reconcile',{source})}>{b==null?'Introduzir saldo inicial':'Atualizar montante'}</button>
-              <HistoryDisclosure title="Ver movimentos da conta">{history(source)}</HistoryDisclosure>
+              <button type="button" id={`account-history-${a.id}`} className="button" aria-haspopup="dialog" onClick={()=>{
+                setNotice('');
+                setModal({kind:'accountHistory',source,returnTo:`account-history-${a.id}`,requestId:newRequestId()});
+              }}>Ver movimentos da conta</button>
               <details className="account-management"><summary>Gerir conta</summary>
                 <p>{a.archived?'Fora das novas seleções de conta.':'Pode retirar esta conta das novas seleções.'} Os registos guardados continuam disponíveis.</p>
                 <div className="account-actions">
@@ -770,21 +838,30 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
         <div className="account-grid">{visibleReserves.map(r=>{
           const key=rid(r.id),b=balance(m,key),goalLines=savingGoals(m,r.id),progress=savingProgress(m,r.id);
           const extra=sum(activeEvents(m).map(e=>freeSaving(m,e,r.id)));
+          const {spent,withdrawn}=reserveUse(m,r.id);
           const warning=reserveWarnings.find(row=>row.reserve.id===r.id);
           const canAssociate=goalLines.some(l=>(pending(m,l)??0)>0&&activeEvents(m).some(e=>
             freeSaving(m,e,r.id)>0&&!activeEvents(m).some(x=>x.savingParentId===e.id&&x.lineId===l.id)));
           return <article className="panel account-card savings-card" id={`reserve-${r.id}`} tabIndex={-1} key={r.id}>
             <div className="section-top"><h2>{reserveLabel(r)}</h2><Icon name="savings"/></div>{accountBadge(r.accountId)}
-            <strong className="balance-value">{money(b??defaultReserveInitial(s,m,r.id))}</strong><span className="tiny">Total acumulado da poupança{b===null?' · estimativa por confirmar':''}</span>
+            <div className="savings-balance">
+              <span>Saldo disponível na poupança</span>
+              <strong className="balance-value">{money(b??defaultReserveInitial(s,m,r.id))}</strong>
+              {b===null&&<small>Estimativa por confirmar</small>}
+            </div>
             <button className="button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open(b===null?'initial':'reconcile',{source:key})}>
               {b===null?'Introduzir Total Acumulado da Poupança':'Atualizar montante total poupado'}
             </button>
             <dl className="savings-progress">
               <div><dt>Objetivo do mês</dt><dd>{goalLines.length?money(progress.target):'Por definir'}</dd></div>
-              <div><dt>Já poupado para o objetivo</dt><dd>{money(progress.saved)}</dd></div>
+              <div><dt>Reforçado para o objetivo este mês</dt><dd>{money(progress.saved)}</dd></div>
               <div><dt>Falta poupar</dt><dd>{goalLines.length?money(progress.remaining):'Por definir'}</dd></div>
               <div><dt>Reforços extra deste mês</dt><dd>{money(extra)}</dd></div>
-              <div><dt>Retirado este mês</dt><dd>{money(reserveUse(m,r.id).withdrawn)}</dd></div>
+            </dl>
+            <h3 className="savings-outflows-title">Saídas deste mês</h3>
+            <dl className="savings-outflows">
+              <div><dt>Gasto a partir desta poupança</dt><dd>{money(spent)}</dd></div>
+              <div><dt>Devolvido à conta</dt><dd>{money(withdrawn-spent)}</dd></div>
             </dl>
             {warning&&<p className="warning">{reserveWarningText(warning)}</p>}
             <button className="text-button" disabled={readOnly||busy||uncertain||conflict} onClick={()=>open('goal',{reserveId:r.id})}>{goalLines.length?'Editar objetivo do mês':'Quanto quer poupar este mês?'}</button>
@@ -818,8 +895,16 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
       </>}
       <footer className="page-footer"><span>O meu mês <span>·</span> Cada mês, um novo ponto de partida.</span></footer>
     </main></div>
-    {duplicate?<DuplicateReview notice={duplicate.notice} busy={busy||uncertain} onClose={dismissDuplicate} onConfirm={()=>void confirmDuplicate()} refresh={store.outdated?()=>void store.refresh():undefined}/>:modal&&<Dialog title={titles[modal.kind]} onClose={close} returnTo={modal.returnTo}>{store.outdated&&<OutdatedNotice refresh={()=>void store.refresh()}/>} {conflict&&<div className="callout" role="alert"><p>Os dados mudaram desde que abriu esta edição.</p><button className="button" onClick={reloadAfterConflict}>Recarregar para voltar a editar</button></div>}{busy&&<StatusMessage className="callout">A confirmar gravação local…</StatusMessage>}{uncertain&&<div className="callout"><p>Resposta por confirmar. Consulte o resultado antes de iniciar outro registo.</p><button className="button" disabled={busy} onClick={retryPending}>Verificar confirmação</button></div>}{modal.kind==='detail'&&selectedLine?<>
-      <div className="dialog-body"><div className="detail-subheading">{accountBadge(selectedLine.accountId)}<span className="pill">{status(selectedLine)}</span></div><dl className="detail-values"><div><dt>Plano inicial {m.snapshot?`· ${dateLabel(m.snapshot.date)}`:'· ainda não guardado'}</dt><dd>{m.snapshot?money(initialPlan(m,selectedLine)):'Sem referência'}</dd></div><div><dt>{selectedLine.kind==='saving'?'Objetivo do mês':'Plano atual'}</dt><dd>{money(selectedLine.plan)}</dd></div>{selectedReminder&&<div><dt>Data do lembrete</dt><dd>{dateLabel(selectedReminder.date)}</dd></div>}{m.snapshot?.reminderDates?.[selectedLine.id]&&<div><dt>Data na referência inicial</dt><dd>{dateLabel(m.snapshot.reminderDates[selectedLine.id])}</dd></div>}<div><dt>{selectedLine.kind==='saving'?'Já poupado para o objetivo':'Realizado'}</dt><dd>{money(realized(m,selectedLine.id))}</dd></div><div><dt>{selectedLine.kind==='saving'?'Falta poupar':'Por realizar'}</dt><dd>{money(pending(m,selectedLine))}</dd></div><div><dt>Desvio realizado face ao plano atual</dt><dd>{selectedLine.plan==null?'Por indicar':`${realized(m,selectedLine.id)>selectedLine.plan?'+':''}${money(realized(m,selectedLine.id)-selectedLine.plan)}`}</dd></div>{m.snapshot&&<div><dt>Alteração do plano face ao inicial</dt><dd>{selectedLine.plan==null||initialPlan(m,selectedLine)==null?'Por indicar':money(selectedLine.plan-initialPlan(m,selectedLine)!)}</dd></div>}</dl>{m.snapshot&&!m.snapshot.lines.some(l=>l.id===selectedLine.id)&&<p className="warning">Adicionado depois do plano inicial. Referência inicial: 0,00 €.</p>}{!readOnly&&<><div className="detail-buttons">
+    {duplicate?<DuplicateReview notice={duplicate.notice} busy={busy||uncertain} onClose={dismissDuplicate} onConfirm={()=>void confirmDuplicate()} refresh={store.outdated?()=>void store.refresh():undefined}/>:modal&&<Dialog key={modal.kind==='accountHistory'?'account-history':undefined} title={titles[modal.kind]} onClose={close} returnTo={modal.returnTo} eyebrow={modal.kind==='accountHistory'?monthLabel(m.period):undefined}>{store.outdated&&<OutdatedNotice refresh={()=>void store.refresh()}/>} {conflict&&<div className="callout" role="alert"><p>Os dados mudaram desde que abriu esta edição.</p><button className="button" onClick={reloadAfterConflict}>Recarregar para voltar a editar</button></div>}{busy&&<StatusMessage className="callout">A confirmar gravação local…</StatusMessage>}{uncertain&&<div className="callout"><p>Resposta por confirmar. Consulte o resultado antes de iniciar outro registo.</p><button className="button" disabled={busy} onClick={retryPending}>Verificar confirmação</button></div>}{modal.kind==='accountHistory'?<>
+      <div className="dialog-body account-history">
+        <p>A data do movimento indica quando ocorreu. A data de registo indica quando foi guardado na aplicação.</p>
+        {notice&&<StatusMessage className="toast">{notice}</StatusMessage>}
+        {error&&<p id="form-error" role="alert" className="form-error">{error}</p>}
+        {history(modal.source,undefined,true)}
+      </div>
+      <div className="dialog-footer"><button type="button" className="button" onClick={close}>Fechar</button></div>
+    </>:modal.kind==='detail'&&selectedLine?<>
+      <div className="dialog-body"><div className="detail-subheading">{accountBadge(selectedLine.accountId)}<span className="pill">{status(selectedLine)}</span></div><dl className="detail-values"><div><dt>Plano inicial {m.snapshot?`· ${dateLabel(m.snapshot.date)}`:'· ainda não guardado'}</dt><dd>{m.snapshot?money(initialPlan(m,selectedLine)):'Sem referência'}</dd></div><div><dt>{selectedLine.kind==='saving'?'Objetivo do mês':'Plano atual'}</dt><dd>{money(selectedLine.plan)}</dd></div>{selectedReminder&&<div><dt>Data do lembrete</dt><dd>{dateLabel(selectedReminder.date)}</dd></div>}{m.snapshot?.reminderDates?.[selectedLine.id]&&<div><dt>Data na referência inicial</dt><dd>{dateLabel(m.snapshot.reminderDates[selectedLine.id])}</dd></div>}<div><dt>{selectedLine.kind==='saving'?'Reforçado para o objetivo este mês':'Realizado'}</dt><dd>{money(realized(m,selectedLine.id))}</dd></div><div><dt>{selectedLine.kind==='saving'?'Falta poupar':'Por realizar'}</dt><dd>{money(pending(m,selectedLine))}</dd></div><div><dt>Desvio realizado face ao plano atual</dt><dd>{selectedLine.plan==null?'Por indicar':`${realized(m,selectedLine.id)>selectedLine.plan?'+':''}${money(realized(m,selectedLine.id)-selectedLine.plan)}`}</dd></div>{m.snapshot&&<div><dt>Alteração do plano face ao inicial</dt><dd>{selectedLine.plan==null||initialPlan(m,selectedLine)==null?'Por indicar':money(selectedLine.plan-initialPlan(m,selectedLine)!)}</dd></div>}</dl>{m.snapshot&&!m.snapshot.lines.some(l=>l.id===selectedLine.id)&&<p className="warning">Adicionado depois do plano inicial. Referência inicial: 0,00 €.</p>}{!readOnly&&<><div className="detail-buttons">
         {canRegisterLine(selectedLine)&&<button className="button primary" disabled={busy||uncertain||conflict} onClick={()=>selectedLine.kind==='saving'
           ?open('save',{id:selectedLine.id,reserveId:selectedLine.reserveId,returnTo:`detail-${selectedLine.id}`})
           :open('payment',{id:selectedLine.id,returnTo:`detail-${selectedLine.id}`})}>
@@ -836,12 +921,13 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
         <p className="tiny">Use esta opção se pagou a despesa a partir de um banco diferente do previsto. O montante será descontado no banco que indicar.</p>
       </div>}</>}{m.snapshot&&<p className="tiny">Referência guardada: {m.snapshot.lines.find(l=>l.id===selectedLine.id)?.name??'Linha adicionada depois'} · {m.snapshot.catalog.accounts.find(a=>a.id===m.snapshot!.lines.find(l=>l.id===selectedLine.id)?.accountId)?.name??'Conta por indicar'} · {m.snapshot.catalog.categories.find(c=>c.id===m.snapshot!.lines.find(l=>l.id===selectedLine.id)?.categoryId)?.name??'Categoria por indicar'}</p>}<h3 className="spaced">Registos e correções</h3>{history(undefined,selectedLine.id)}{error&&<p id="form-error" role="alert" className="form-error">{error}</p>}</div><div className="dialog-footer"><button className="button" onClick={close}>Fechar</button></div>
     </>:<form key={modal.requestId} onSubmit={submit} noValidate aria-busy={busy}><fieldset className="form-fields" disabled={readOnly||busy||uncertain}><div className="dialog-body">
-      <InitialBalances sources={missingBalances} values={values} errorSource={initialErrorSource} error={error} onChange={(source,value)=>set(`initial:${source}`,value)}/>
+      <InitialBalances sources={missingBalances.filter(source=>source.id!==secondSource)} values={values} errorSource={initialErrorSource} error={error} onChange={(source,value)=>set(`initial:${source}`,value)}/>
       {correction&&<><p className="preview">Ao confirmar, o histórico guarda a compensação e o registo corrigido no mesmo mês.</p>
         {amountField(correction.type==='total'?'Total gasto até à data (€)':'Montante (€)')}{dateField}
         {correction.type==='adjustment'?<label>Motivo da diferença<input value={value('note')} onChange={e=>set('note',e.target.value)} required/></label>:
           correction.line?.kind==='expense'&&correction.type!=='total'&&<label>Descrição<input value={value('description')} onChange={e=>set('description',e.target.value)}/></label>}
         {value('source')&&<p className="tiny">Origem: {sourceName(value('source'))}{value('destination')&&correction.type==='transfer'?` · Destino: ${sourceName(value('destination'))}`:''}</p>}
+        {reserveAfterField}{paymentShortfall}
         {!!correction.lineId&&!correction.line?.variable&&correction.type!=='detail'&&
           <label className="checkbox"><input type="checkbox" checked={value('complete')==='true'} onChange={e=>set('complete',String(e.target.checked))}/>Concluir pelo valor indicado</label>}
       </>}
@@ -861,16 +947,16 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
         </>}
         {modal.kind==='initial'&&!savingsInitial&&<p className="preview">Indique o saldo da conta à ordem, separado das poupanças.</p>}
       </>}
-      {modal.kind==='payment'&&selectedLine&&<><p><strong>{selectedLine.name}</strong> · previsto {money(selectedLine.plan)} · falta {money(pending(m,selectedLine))}</p>{selectedLine.variable&&!modal.otherBank&&<label>Tipo de registo<select value={value('mode')} onChange={e=>{set('mode',e.target.value);set('amount',e.target.value==='total'?inputMoney(realized(m,selectedLine.id)):'' );}}><option value="purchase">Compra individual</option><option value="total">Total acumulado</option><option value="detail">Detalhar compra já incluída num total</option></select></label>}{selectedLine.variable&&value('mode')!=='total'&&<label>Nome da compra (opcional)<input value={value('description')} onChange={e=>set('description',e.target.value)} placeholder="Ex.: Continente ou Mercearia" maxLength={120}/></label>}{value('mode')==='detail'&&<><label>Ajuste que já inclui esta compra<Select options={activeEvents(m).filter(e=>e.lineId===selectedLine.id&&e.type==='total'&&e.amount>0&&totalUnallocated(m,e)>0).map(e=>({id:e.id,name:`${dateLabel(e.date)} · ${money(totalUnallocated(m,e))} por detalhar · ${Object.keys(e.deltas).map(sourceName).join(', ')}`}))} emptyLabel="Sem ajustes por detalhar" placeholder="Escolha o ajuste" aria-invalid={invalidField('DETAIL')} aria-describedby={invalidField('DETAIL')?'form-error':undefined} value={value('totalId')} onChange={e=>set('totalId',e.target.value)} required/>{fieldError('DETAIL')}</label><p className="preview">Use a mesma origem do ajuste. Este detalhe identifica uma compra já contabilizada e não aumenta o gasto nem volta a descontar dinheiro.</p></>}{amountField(value('mode')==='total'?'Total gasto até à data (€)':'Montante (€)')}<div className="form-two">{dateField}{sourceField(selectedLine.kind==='income'?'Banco onde recebe o dinheiro':modal.otherBank?'Banco de onde saiu o dinheiro':'Origem do dinheiro','source',expensePaymentSources)}</div>{selectedLine.kind==='expense'&&value('mode')!=='detail'&&<p className="tiny">Escolha a conta ou poupança que usou. No plano: {sourceName(selectedLine.reserveId?rid(selectedLine.reserveId):aid(selectedLine.accountId))}.</p>}{selectedLine.kind==='saving'&&<p className="preview">Destino: {sourceName(rid(selectedLine.reserveId!))}. Não conta como despesa.</p>}{selectedLine.kind==='investment'&&<p className="preview">A aplicação reduz o saldo da conta principal e fica no histórico. O valor da carteira não é acompanhado nesta aplicação.</p>}{value('mode')==='total'&&totalPreviewBox}{!selectedLine.variable&&value('mode')!=='detail'&&completionField}<p className="tiny">O estado e o saldo mudam após confirmar. Pode corrigir ou anular o registo no detalhe.</p></>}
-      {expenseRemainder>0&&remainderReserves.length>0&&<div className="preview expense-remainder">
+      {modal.kind==='payment'&&selectedLine&&<><p><strong>{selectedLine.name}</strong> · previsto {money(selectedLine.plan)} · falta {money(pending(m,selectedLine))}</p>{selectedLine.variable&&!modal.otherBank&&<label>Tipo de registo<select value={value('mode')} onChange={e=>{set('mode',e.target.value);set('amount',e.target.value==='total'?inputMoney(realized(m,selectedLine.id)):'' );}}><option value="purchase">Compra individual</option><option value="total">Total acumulado</option><option value="detail">Detalhar compra já incluída num total</option></select></label>}{selectedLine.variable&&value('mode')!=='total'&&<label>Nome da compra (opcional)<input value={value('description')} onChange={e=>set('description',e.target.value)} placeholder="Ex.: Continente ou Mercearia" maxLength={120}/></label>}{value('mode')==='detail'&&<><label>Ajuste que já inclui esta compra<Select options={activeEvents(m).filter(e=>e.lineId===selectedLine.id&&e.type==='total'&&e.amount>0&&totalUnallocated(m,e)>0).map(e=>({id:e.id,name:`${dateLabel(e.date)} · ${money(totalUnallocated(m,e))} por detalhar · ${Object.keys(e.deltas).map(sourceName).join(', ')}`}))} emptyLabel="Sem ajustes por detalhar" placeholder="Escolha o ajuste" aria-invalid={invalidField('DETAIL')} aria-describedby={invalidField('DETAIL')?'form-error':undefined} value={value('totalId')} onChange={e=>set('totalId',e.target.value)} required/>{fieldError('DETAIL')}</label><p className="preview">Use a mesma origem do ajuste. Este detalhe identifica uma compra já contabilizada e não aumenta o gasto nem volta a descontar dinheiro.</p></>}{amountField(value('mode')==='total'?'Total gasto até à data (€)':'Montante (€)')}<div className="form-two">{dateField}{sourceField(selectedLine.kind==='income'?'Banco onde recebe o dinheiro':modal.otherBank?'Banco de onde saiu o dinheiro':'Origem do dinheiro','source',expensePaymentSources)}</div>{selectedLine.kind==='expense'&&value('mode')!=='detail'&&<p className="tiny">Escolha a conta ou poupança que usou. No plano: {sourceName(plannedSource(selectedLine))}.</p>}{selectedLine.kind==='saving'&&<p className="preview">Destino: {sourceName(rid(selectedLine.reserveId!))}. Não conta como despesa.</p>}{selectedLine.kind==='investment'&&<p className="preview">A aplicação reduz o saldo da conta principal e fica no histórico. O valor da carteira não é acompanhado nesta aplicação.</p>}{value('mode')==='total'&&totalPreviewBox}{!selectedLine.variable&&value('mode')!=='detail'&&completionField}<p className="tiny">O estado e o saldo mudam após confirmar. Pode corrigir ou anular o registo no detalhe.</p></>}
+      {expenseRemainder>0&&!shortage&&remainderReserves.length>0&&<div className="preview expense-remainder">
         <p>Sobraram <strong>{money(expenseRemainder)}</strong> do valor previsto.</p>
-        <label>Para que poupança quer mover a sobra?<Select
+        <Choice label="Para que poupança quer mover a sobra?" name="remainderReserve"
           options={remainderReserves.map(reserve=>({id:reserve.id,name:`${reserveLabel(reserve)} · ${nameOf(reserve.accountId)}`}))}
-          emptyLabel="Sem poupanças disponíveis" placeholder="Não mover a sobra" value={value('remainderReserve')}
-          onChange={event=>set('remainderReserve',event.target.value)}/></label>
+          emptyLabel="Sem poupanças disponíveis" clearLabel="Não mover a sobra" value={value('remainderReserve')}
+          onChange={id=>set('remainderReserve',id)}/>
         {value('remainderReserve')&&<p>Pode confirmar o reforço depois de guardar a despesa.</p>}
       </div>}
-      {modal.kind==='payment'&&reserveAfterField}
+      {modal.kind==='payment'&&<>{reserveAfterField}{paymentShortfall}</>}
       {modal.kind==='line'&&<>
         {nameField}
         {modal.target&&<label>Tipo<select value={value('kind')} onChange={e=>{set('kind',e.target.value);set('reserve','');}}><option value="expense">Despesa</option><option value="income">Receita</option><option value="saving">Reforço de poupança</option><option value="investment">Investimento</option></select></label>}
@@ -894,16 +980,17 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
         {(value('kind')!=='income'||modal.target)&&categoryField}
         {(value('kind')==='saving'||value('kind')==='expense')&&reserveSelect}
         {reserveAfterField}
+        {paymentShortfall}
         {modal.id&&<button type="button" className="text-button danger" onClick={async()=>{try{await run({type:'removeLine',id:modal.id!,target:modal.target},modal.target?'Definição removida do Modelo Base.':'Movimento removido do plano atual.',modal.requestId,modal.revision);close();}catch(e){formFailure(e);}}}>Remover do {modal.target==='base'?'Modelo Base':'plano atual'}</button>}
       </>}
       {modal.kind==='goal'&&<>
-        {!modal.reserveId&&<><label>Poupança<Select options={reserveChoices} emptyLabel="Sem poupanças disponíveis" placeholder="Escolha a poupança"
-          data-initial-focus value={value('reserve')} aria-invalid={invalidField('RESERVE')} aria-describedby={invalidField('RESERVE')?'form-error':undefined} onChange={e=>{
-          const id=e.target.value,existing=savingGoals(m,id),goal=existing.length===1?existing[0]:undefined;
+        {!modal.reserveId&&<><Choice label="Poupança" name="reserve" options={reserveChoices} emptyLabel="Sem poupanças disponíveis"
+          initialFocus value={value('reserve')} invalid={invalidField('RESERVE')} error={fieldError('RESERVE')} onChange={id=>{
+          const existing=savingGoals(m,id),goal=existing.length===1?existing[0]:undefined;
           set('reserve',id);set('goalId',goal?.id??'');
           set('amount',inputMoney(goal?.plan));set('account',goal?.accountId??s.reserves.find(r=>r.id===id)?.accountId??'');
           set('category',goal?.categoryId??'');set('dueDate',goal?.dueDate??'');
-        }}/>{fieldError('RESERVE')}</label>
+        }}/>
           <button type="button" className="text-button" onClick={()=>open('reserve')}>Criar poupança</button></>}
         {reserveForm&&<><p><strong>{reserveLabel(reserveForm)}</strong> · {nameOf(reserveForm.accountId)}</p>
           {goals.length>1&&goalSelect(goals,id=>{
@@ -981,9 +1068,12 @@ export function FinanceWorkspace({store,space,memory,readOnly,shared,sharing}:{s
     </div><div className="dialog-footer"><button type="button" className="button" onClick={close}>{modal.optionalGoal?'Agora não':'Cancelar'}</button><button className={`button ${modal.kind==='deleteAccount'?'danger':'primary'}`} type="submit" disabled={conflict||store.outdated||modal.kind==='link'&&!linkTarget}>{modal.kind==='deleteAccount'?'Eliminar definitivamente':modal.kind==='month'?'Abrir mês':missingBalances.length?'Confirmar saldos e registo':modal.kind==='payment'?'Confirmar registo':'Confirmar'}</button></div></fieldset></form>}</Dialog>}
   </div>;
 
-  function history(source?:string,lineId?:string) {
+  function history(source?:string,lineId?:string,accountHistory=false) {
     return <MovementHistory key={lineId??source} owner={store.historyHeaders['X-Account']} space={store.spaceId} month={m} categories={s.categories} source={source} lineId={lineId}
-      focusedEvent={modal?.eventId} sourceName={sourceName} disabled={busy||uncertain||conflict} readOnly={readOnly}
-      onVoid={(id,message)=>safe({type:'void',id},message)} onCorrect={openCorrection}/>;
+      focusedEvent={modal?.eventId} sourceName={sourceName} disabled={busy||uncertain||conflict} readOnly={readOnly} accountHistory={accountHistory}
+      onVoid={(id,message)=>{
+        if(accountHistory){setNotice('');setError('');}
+        return safe({type:'void',id},message);
+      }} onCorrect={openCorrection}/>;
   }
 }
