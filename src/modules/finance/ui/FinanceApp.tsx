@@ -2,9 +2,10 @@
 import { useState } from 'react';
 import { usePersistentStore } from '../client/usePersistentStore';
 import type { FinanceMemory } from '../client/draft';
-import { calendarDate } from '../domain/money';
+import { calendarDate, monthLabel } from '../domain/money';
 import { FinanceWorkspace } from './FinanceWorkspace';
 import { newRequestId } from '../client/requestId';
+import { MonthField } from './MonthField';
 
 export function FinanceApp({
   owner,
@@ -23,8 +24,10 @@ export function FinanceApp({
 }) {
   const store = usePersistentStore(owner, space, memory.period, readOnly);
   const [period, setPeriod] = useState(() => calendarDate().slice(0, 7));
-  const [message, setMessage] = useState('');
+  const [message, setMessage] = useState<{ text: string; role: 'alert' | 'status' }>();
   const [intent, setIntent] = useState(newRequestId);
+  const { pendingPeriod } = store;
+  const blocked = store.busy || store.uncertain;
   if (!store.state)
     return (
       <section id="main" tabIndex={-1} className="auth-main">
@@ -51,47 +54,65 @@ export function FinanceApp({
               className="auth-form"
               onSubmit={async (e) => {
                 e.preventDefault();
-                setMessage('');
+                if (blocked) return;
+                setMessage(undefined);
                 try {
                   await store.dispatch({ type: 'month', period }, intent);
                 } catch (error) {
-                  setMessage((error as Error).message);
+                  setMessage({ text: (error as Error).message, role: 'alert' });
+                  setIntent(newRequestId());
                 }
               }}
             >
-              <label>
-                Mês
-                <input
-                  type="month"
-                  required
-                  value={period}
-                  onChange={(e) => {
-                    setPeriod(e.target.value);
-                    setIntent(newRequestId());
-                  }}
-                />
-              </label>
-              {(message || store.error) && <p role="alert">{message || store.error}</p>}
-              <button className="button primary" disabled={store.busy || store.uncertain}>
+              <MonthField
+                value={pendingPeriod ?? period}
+                disabled={blocked}
+                onChange={(selected) => {
+                  setPeriod(selected);
+                  setMessage(undefined);
+                  setIntent(newRequestId());
+                }}
+              />
+              {message && (
+                <p role={message.role} className={message.role === 'alert' ? 'form-error' : undefined}>
+                  {message.text}
+                </p>
+              )}
+              {store.error && (
+                <p role="alert" className="form-error">
+                  {store.error}
+                </p>
+              )}
+              <button type="submit" className="button primary" disabled={blocked}>
                 Criar primeiro mês
               </button>
+              {pendingPeriod && (
+                <>
+                  <p role="status">Confirmação por verificar · {monthLabel(pendingPeriod)}.</p>
+                  <button
+                    type="button"
+                    className="button"
+                    disabled={store.busy}
+                    onClick={async () => {
+                      setMessage(undefined);
+                      setPeriod(pendingPeriod);
+                      try {
+                        const saved = await store.retry();
+                        setMessage({
+                          text: saved ? 'Mês confirmado.' : 'Tentativa encerrada sem efeito.',
+                          role: 'status',
+                        });
+                        setIntent(newRequestId());
+                      } catch (error) {
+                        setMessage({ text: (error as Error).message, role: 'alert' });
+                      }
+                    }}
+                  >
+                    Verificar confirmação
+                  </button>
+                </>
+              )}
             </form>
-          )}
-          {store.uncertain && (
-            <button
-              className="button"
-              onClick={async () => {
-                try {
-                  const saved = await store.retry();
-                  setMessage(saved ? 'Mês confirmado.' : 'Tentativa encerrada sem efeito.');
-                  setIntent(newRequestId());
-                } catch (e) {
-                  setMessage((e as Error).message);
-                }
-              }}
-            >
-              Verificar confirmação
-            </button>
           )}
         </section>
         {sharing}

@@ -509,6 +509,8 @@ dialog .form-fields{display:contents}
 .calendar-heading .icon-button svg+svg{margin-inline-start:-8px}
 .calendar-previous svg{transform:rotate(90deg)}
 .calendar-next svg{transform:rotate(-90deg)}
+.month-calendar .calendar-heading .icon-button{min-width:44px}
+.month-calendar .calendar-heading h3{font-size:17px;font-variant-numeric:tabular-nums}
 .date-calendar table{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:2px;margin:4px 0 8px}
 .date-calendar th{padding:4px 0;color:var(--muted);font-size:12px;font-weight:600}
 .date-calendar td{padding:0}

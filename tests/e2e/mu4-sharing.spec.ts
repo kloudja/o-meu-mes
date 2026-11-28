@@ -261,7 +261,11 @@ test('MU4 registo por convite preserva intenção até à verificação e pode r
     await entry.getByRole('button', { name: 'Entrar', exact: true }).click();
     await expect(selectSpace(entry)).toHaveValue(finance.spaceId);
     await expect(entry.getByRole('heading', { name: 'Ainda sem meses' })).toBeVisible();
+    await expect(entry.getByText('Poderás consultar os meses quando forem criados.')).toBeVisible();
+    await expect(entry.getByRole('button', { name: /^Mês selecionado / })).toHaveCount(0);
     await expect(entry.getByRole('button', { name: 'Criar primeiro mês' })).toHaveCount(0);
+    await expect(entry.getByRole('button', { name: 'Verificar confirmação' })).toHaveCount(0);
+    await entry.screenshot({ path: info.outputPath('sem-meses-leitor.png'), animations: 'disabled' });
     await sharePanel(entry).getByText('Sair do espaço', { exact: true }).click();
     await sharePanel(entry).getByRole('button', { name: 'Confirmar saída' }).click();
     await expect(entry.getByRole('heading', { name: 'Sem espaços' })).toBeVisible();

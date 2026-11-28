@@ -6,8 +6,15 @@ import type { APIRequestContext, Page, Request } from '@playwright/test';
 
 const periods = ['2026-11', '2026-12'] as const;
 const space = (page: Page) => page.getByLabel('Espaço', { exact: true });
-const month = (page: Page) => page.getByLabel('Mês selecionado');
+const month = (page: Page) => page.getByRole('combobox', { name: 'Mês selecionado', exact: true });
 const button = (page: Page, name: string) => page.getByRole('button', { name, exact: true });
+const monthField = (page: Page) => page.getByRole('button', { name: /^Mês selecionado / });
+const monthCalendar = (page: Page) => page.getByRole('dialog', { name: 'Escolher mês' });
+
+async function firstMonthPeriods(page: Page) {
+  const year = await page.evaluate(() => new Date().getFullYear());
+  return { december: `dezembro de ${year}`, january: `janeiro de ${year + 1}`, firstPeriod: `${year + 1}-01` };
+}
 
 async function assertPrivateStorage(page: Page, ...privateValues: string[]) {
   const storage = await page.evaluate(() =>
@@ -158,20 +165,56 @@ for (const width of [1366, 390]) {
       months: {},
     });
     await page.screenshot({ path: info.outputPath(`sem-meses-${width}.png`), animations: 'disabled' });
-    if (!(await page.locator('input[type=month]').isVisible()))
-      await button(page, 'Criar primeiro mês').click();
-    await page.locator('input[type=month]').fill(periods[0]);
-    await page
-      .getByRole('button', { name: /Criar primeiro mês|Abrir mês/ })
-      .last()
-      .click();
-    await expect(month(page)).toHaveValue(periods[0]);
+
+    const picker = monthField(page);
+    const calendar = monthCalendar(page);
+    const labels = await firstMonthPeriods(page);
+    const december = calendar.getByRole('button', { name: labels.december });
+    const january = calendar.getByRole('button', { name: labels.january });
+    const writes: Request[] = [];
+    page.on('request', (request) => {
+      if (request.method() === 'POST' && new URL(request.url()).pathname === '/api/state') writes.push(request);
+    });
+
+    await picker.click();
+    await december.click();
+    await expect(picker).toHaveAccessibleName(`Mês selecionado ${labels.december}`);
+    await picker.click();
+    await expect(december).toBeFocused();
+    await expect(calendar.getByRole('gridcell', { selected: true })).toHaveText('Dezembro');
+    await page.screenshot({ path: info.outputPath(`calendario-dezembro-${width}.png`), animations: 'disabled' });
+    await december.press('ArrowRight');
+    await expect(calendar.getByRole('heading', { name: labels.firstPeriod.slice(0, 4) })).toBeVisible();
+    await expect(january).toBeFocused();
+    if (width === 390) await calendar.getByRole('button', { name: 'Cancelar' }).click();
+    else await january.press('Escape');
+    await expect(calendar).toHaveCount(0);
+    await expect(picker).toBeFocused();
+    await expect(picker).toHaveAccessibleName(`Mês selecionado ${labels.december}`);
+
+    await picker.press('Enter');
+    await expect(december).toBeFocused();
+    await calendar.getByRole('button', { name: 'Ano seguinte' }).click();
+    await expect(january).toBeVisible();
+    await january.click();
+    await expect(calendar).toHaveCount(0);
+    await expect(picker).toHaveAccessibleName(`Mês selecionado ${labels.january}`);
+    await expect(page.getByRole('heading', { name: 'Ainda sem meses' })).toBeVisible();
+    expect(writes).toHaveLength(0);
+    expect((await (await finance.read()).json()).periods).toEqual([]);
+    await page.screenshot({ path: info.outputPath(`janeiro-selecionado-${width}.png`), animations: 'disabled' });
+
+    await button(page, 'Criar primeiro mês').click();
+    await expect(month(page)).toHaveValue(labels.firstPeriod);
+    expect(writes.map((request) => request.postDataJSON().action)).toEqual([
+      { type: 'month', period: labels.firstPeriod },
+    ]);
     await expect(space(page)).toHaveValue(list[0].id);
     await expect(page.getByRole('heading', { name: width === 390 ? 'Definições' : 'Mês', exact: true })).toBeVisible();
     const selector = await space(page).boundingBox();
     const avatar = await button(page, 'Definições do utilizador').boundingBox();
     expect(selector && avatar && selector.x + selector.width <= avatar.x).toBe(true);
-    expect(await currentMonth(finance, periods[0])).toMatchObject({ events: [], lines: [], initials: {} });
+    expect(await currentMonth(finance, labels.firstPeriod)).toMatchObject({ events: [], lines: [], initials: {} });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await assertPrivateStorage(page, 'Espaço privado de ensaio');
     await page.screenshot({ path: info.outputPath(`primeiro-mes-${width}.png`), animations: 'disabled' });
@@ -181,11 +224,74 @@ for (const width of [1366, 390]) {
     await space(page).selectOption(sibling.spaceId);
     await expect(month(page)).toHaveValue('2026-12');
     await space(page).selectOption(list[0].id);
-    await expect(month(page)).toHaveValue(periods[0]);
+    await expect(month(page)).toHaveValue(labels.firstPeriod);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
 
   });
 }
+
+test('primeiro mês mantém o período ao recuperar de uma gravação recusada ou incerta', async ({
+  page, application,
+}, info) => {
+  const owner = await registerOwner(page.request, application, syntheticCredentials());
+  const finance = await createTestSpace(page.request, application.url, owner, 'Primeiro mês em recuperação');
+  await page.goto('/');
+  const picker = monthField(page);
+  const calendar = monthCalendar(page);
+  const main = page.getByRole('main');
+  const create = button(page, 'Criar primeiro mês');
+  const verify = button(page, 'Verificar confirmação');
+  const { january, firstPeriod } = await firstMonthPeriods(page);
+  await picker.click();
+  await calendar.getByRole('button', { name: 'Ano seguinte' }).click();
+  await calendar.getByRole('button', { name: january }).click();
+
+  const attempts: string[] = [];
+  await page.route('**/api/state*', async (route) => {
+    const request = route.request();
+    if (request.method() !== 'POST') return route.continue();
+    attempts.push(request.postDataJSON().action.period);
+    if (attempts.length === 1) {
+      return route.fulfill({ status: 409, json: { code: 'CONFLICT', message: 'Os dados foram atualizados.' } });
+    }
+    if (attempts.length === 2) {
+      return route.fulfill({ status: 503, json: { code: 'STORAGE', message: 'Gravação indisponível.' } });
+    }
+    const response = await route.fetch();
+    expect(response.ok(), await response.text()).toBe(true);
+    await route.abort('failed');
+  });
+
+  await create.click();
+  await expect(main.getByRole('alert')).toHaveText('Os dados foram atualizados.');
+  await expect(picker).toBeEnabled();
+  await expect(picker).toHaveAccessibleName(`Mês selecionado ${january}`);
+  await expect(verify).toHaveCount(0);
+  await page.screenshot({ path: info.outputPath('primeiro-mes-erro.png'), animations: 'disabled' });
+  expect((await (await finance.read()).json()).periods).toEqual([]);
+
+  await create.click();
+  await expect(main.getByRole('alert')).toHaveText('Gravação indisponível.');
+  await expect(page.getByText(`Confirmação por verificar · ${january}.`)).toBeVisible();
+  await expect(picker).toBeDisabled();
+  await expect(create).toBeDisabled();
+  await page.screenshot({ path: info.outputPath('primeiro-mes-incerto.png'), animations: 'disabled' });
+  await page.reload();
+  await expect(picker).toHaveAccessibleName(`Mês selecionado ${january}`);
+  await expect(picker).toBeDisabled();
+  await verify.click();
+  await expect(main.getByRole('status')).toHaveText('Tentativa encerrada sem efeito.');
+  await expect(picker).toBeEnabled();
+  await expect(picker).toHaveAccessibleName(`Mês selecionado ${january}`);
+  expect((await (await finance.read()).json()).periods).toEqual([]);
+
+  await create.click();
+  await verify.click();
+  await expect(month(page)).toHaveValue(firstPeriod);
+  await expect(verify).toHaveCount(0);
+  expect(attempts).toEqual([firstPeriod, firstPeriod, firstPeriod]);
+  expect(await currentMonth(finance, firstPeriod)).toMatchObject({ events: [], lines: [], initials: {} });
+});
 
 test('respostas de leitura em atraso respeitam o espaço e o mês atualmente selecionados', async ({
   page,
